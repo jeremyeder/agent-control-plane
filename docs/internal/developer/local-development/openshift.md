@@ -49,12 +49,12 @@ REGISTRY_HOST=$(oc get route default-route -n openshift-image-registry \
   --template='{{ .spec.host }}')
 INTERNAL_REG="image-registry.openshift-image-registry.svc:5000/ambient-code"
 
-for img in vteam_frontend vteam_backend vteam_operator vteam_public_api vteam_claude_runner vteam_state_sync vteam_api_server vteam_mcp vteam_control_plane; do
+for img in acp_ambient_ui acp_api_server acp_control_plane acp_claude_runner acp_mcp; do
   podman tag localhost/${img}:latest ${REGISTRY_HOST}/ambient-code/${img}:latest
   podman push ${REGISTRY_HOST}/ambient-code/${img}:latest
 done
 
-oc rollout restart deployment backend-api frontend agentic-operator public-api ambient-api-server ambient-control-plane -n ambient-code
+oc rollout restart deployment ambient-api-server ambient-ui ambient-control-plane -n ambient-code
 ```
 
 ---
@@ -68,12 +68,13 @@ REGISTRY_HOST=$(oc get route default-route -n openshift-image-registry \
   --template='{{ .spec.host }}')
 
 cd components/manifests/overlays/production
-sed -i "s#newName: quay.io/ambient_code/#newName: ${REGISTRY_HOST}/ambient-code/#g" kustomization.yaml
+kustomize edit set image quay.io/ambient_code/acp_api_server=${REGISTRY_HOST}/ambient-code/acp_api_server
+kustomize edit set image quay.io/ambient_code/acp_control_plane=${REGISTRY_HOST}/ambient-code/acp_control_plane
+kustomize edit set image quay.io/ambient_code/acp_ambient_ui=${REGISTRY_HOST}/ambient-code/acp_ambient_ui
+kustomize edit set image quay.io/ambient_code/acp_claude_runner=${REGISTRY_HOST}/ambient-code/acp_claude_runner
 
-cd ../..
-./deploy.sh
+oc apply -k . -n ambient-code
 
-cd overlays/production
 git checkout kustomization.yaml
 ```
 

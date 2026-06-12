@@ -47,14 +47,14 @@ Credential sidecar containers are injected into session pods when the correspond
 
 ---
 
-## Step 1: Apply CRDs and RBAC (cluster-scoped, once per cluster)
+## Step 1: Apply RBAC (cluster-scoped, once per cluster)
 
 ```bash
 oc apply -k components/manifests/base/crds/
 oc apply -k components/manifests/base/rbac/
 ```
 
-These are idempotent. On a shared cluster where CRDs already exist from another namespace, this is safe to re-run.
+These are idempotent and safe to re-run on shared clusters.
 
 ---
 
@@ -147,10 +147,9 @@ For the production namespace (`ambient-code`), use:
 
 ```bash
 make deploy
-# calls components/manifests/deploy.sh — handles OAuth, restores kustomization after apply
+# applies components/manifests/overlays/production via kubectl apply -k
 ```
 
-`deploy.sh` mutates `kustomization.yaml` in-place and restores it post-apply. It also handles the OpenShift OAuth `OAuthClient` (requires cluster-admin). Use `make deploy` only for the canonical production namespace.
 
 ### Manual (for debugging or one-off namespaces)
 

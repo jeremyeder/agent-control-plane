@@ -15,7 +15,7 @@ Comprehensive integration test suite that validates the complete local developme
 - ✅ Makefile commands and syntax
 - ✅ Kind cluster status
 - ✅ Kubernetes configuration
-- ✅ Namespace and CRDs
+- ✅ Namespace and RBAC
 - ✅ Pod health and readiness
 - ✅ Service configuration
 - ✅ Ingress setup
@@ -216,7 +216,7 @@ make local-troubleshoot
 #### "Backend not responding"
 ```bash
 make local-logs-backend
-make kind-reload-backend
+make kind-rebuild
 ```
 
 ## Writing New Tests
@@ -281,7 +281,7 @@ Planned additions:
 
 ### Contract Tests
 - API contract validation
-- CRD schema validation
+- API schema validation
 - Service interface tests
 
 ### Integration Tests

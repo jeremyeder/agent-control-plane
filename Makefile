@@ -1,7 +1,7 @@
 .PHONY: help setup build-all build-runner build-cli build-ambient-ui deploy clean check-architecture
 .PHONY: local-down local-status local-reload-api-server local-up local-clean local-rebuild
 .PHONY: local-dev-token
-.PHONY: local-logs local-logs-backend local-logs-frontend local-logs-operator local-shell local-shell-frontend
+.PHONY: local-logs local-logs-api-server local-logs-ui local-logs-control-plane local-shell-api-server local-shell-ui
 .PHONY: local-test local-test-dev local-test-quick test-all local-troubleshoot local-port-forward local-stop-port-forward
 .PHONY: push-all registry-login setup-hooks remove-hooks lint check-minikube check-kind check-kubectl check-local-context dev-bootstrap kind-rebuild kind-reload-ambient-ui kind-status kind-login kind-sso-toggle
 .PHONY: preflight-cluster preflight dev-env dev
@@ -67,6 +67,8 @@ JIRA_MCP_IMAGE ?= acp_credential_jira:$(IMAGE_TAG)
 K8S_MCP_IMAGE ?= acp_credential_k8s:$(IMAGE_TAG)
 GOOGLE_MCP_IMAGE ?= acp_credential_google:$(IMAGE_TAG)
 AMBIENT_UI_IMAGE ?= acp_ambient_ui:$(IMAGE_TAG)
+CONTROL_PLANE_IMAGE ?= acp_control_plane:$(IMAGE_TAG)
+MCP_IMAGE ?= acp_mcp:$(IMAGE_TAG)
 
 # kind-local overlay always references localhost/acp_* images.
 # Podman produces this prefix natively; for Docker we tag before loading.
@@ -167,7 +169,7 @@ help: ## Display this help message
 
 ##@ Building
 
-build-all: build-runner build-api-server build-ambient-ui ## Build all container images
+build-all: build-runner build-api-server build-control-plane build-mcp build-ambient-ui ## Build all container images
 
 build-ambient-ui: ## Build ambient-ui image
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building ambient-ui with $(CONTAINER_ENGINE)..."
@@ -190,6 +192,21 @@ build-api-server: ## Build ambient API server image
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
 		-t $(API_SERVER_IMAGE) .
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) API server built: $(API_SERVER_IMAGE)"
+
+build-control-plane: ## Build control plane image
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building control plane with $(CONTAINER_ENGINE)..."
+	@$(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
+		-f components/ambient-control-plane/Dockerfile \
+		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
+		-t $(CONTROL_PLANE_IMAGE) components
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Control plane built: $(CONTROL_PLANE_IMAGE)"
+
+build-mcp: ## Build MCP server image
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building MCP server with $(CONTAINER_ENGINE)..."
+	@cd components/ambient-mcp && $(CONTAINER_ENGINE) build $(PLATFORM_FLAG) $(BUILD_FLAGS) \
+		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
+		-t $(MCP_IMAGE) .
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) MCP server built: $(MCP_IMAGE)"
 
 build-credential-sidecars: build-credential-github build-credential-jira build-credential-k8s build-credential-google ## Build all credential sidecar images
 
@@ -445,23 +462,23 @@ local-test-quick: check-kubectl ## Quick smoke test of local environment
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Testing namespace..."
 	@kubectl get namespace $(NAMESPACE) >/dev/null 2>&1 && echo "$(COLOR_GREEN)✓$(COLOR_RESET) Namespace exists" || (echo "$(COLOR_RED)✗$(COLOR_RESET) Namespace missing" && exit 1)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for pods to be ready..."
-	@kubectl wait --for=condition=ready pod -l app=backend-api -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 && \
-	kubectl wait --for=condition=ready pod -l app=frontend -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 && \
+	@kubectl wait --for=condition=ready pod -l app=ambient-api-server -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 && \
+	kubectl wait --for=condition=ready pod -l app=ambient-ui -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 && \
 	echo "$(COLOR_GREEN)✓$(COLOR_RESET) Pods ready" || (echo "$(COLOR_RED)✗$(COLOR_RESET) Pods not ready" && exit 1)
-	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Testing backend health..."
-	@kubectl port-forward -n $(NAMESPACE) svc/backend-service 18080:8080 >/tmp/pf-smoke-backend.log 2>&1 & PF_PID=$$!; \
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Testing API server health..."
+	@kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server 18434:4434 >/tmp/pf-smoke-api-server.log 2>&1 & PF_PID=$$!; \
 	sleep 2; \
 	for i in 1 2 3 4 5; do \
-		curl -sf http://localhost:18080/health >/dev/null 2>&1 && { echo "$(COLOR_GREEN)✓$(COLOR_RESET) Backend healthy"; break; } || { \
+		curl -sf http://localhost:18434/healthcheck >/dev/null 2>&1 && { echo "$(COLOR_GREEN)✓$(COLOR_RESET) API server healthy"; break; } || { \
 			if [ $$i -eq 5 ]; then \
-				kill $$PF_PID 2>/dev/null; echo "$(COLOR_RED)✗$(COLOR_RESET) Backend not responding after 5 attempts"; exit 1; \
+				kill $$PF_PID 2>/dev/null; echo "$(COLOR_RED)✗$(COLOR_RESET) API server not responding after 5 attempts"; exit 1; \
 			fi; \
 			sleep 2; \
 		}; \
 	done; \
 	kill $$PF_PID 2>/dev/null || true
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Testing frontend..."
-	@kubectl port-forward -n $(NAMESPACE) svc/frontend-service 13030:3000 >/tmp/pf-smoke-frontend.log 2>&1 & PF_PID=$$!; \
+	@kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service 13030:3000 >/tmp/pf-smoke-ui.log 2>&1 & PF_PID=$$!; \
 	sleep 2; \
 	for i in 1 2 3 4 5; do \
 		curl -sf http://localhost:13030 >/dev/null 2>&1 && { echo "$(COLOR_GREEN)✓$(COLOR_RESET) Frontend accessible"; break; } || { \
@@ -475,34 +492,31 @@ local-test-quick: check-kubectl ## Quick smoke test of local environment
 	@echo ""
 	@echo "$(COLOR_GREEN)✓ Quick smoke test passed!$(COLOR_RESET)"
 
-dev-test-operator: ## Run only operator tests
-	@echo "Running operator-specific tests..."
-	@bash components/scripts/local-dev/crc-test.sh 2>&1 | grep -A 1 "Operator"
 
 ##@ Development Tools
 
 local-logs: check-kubectl ## Show logs from all components (follow mode)
 	@echo "$(COLOR_BOLD)📋 Streaming logs from all components (Ctrl+C to stop)$(COLOR_RESET)"
-	@kubectl logs -n $(NAMESPACE) -l 'app in (backend-api,frontend,agentic-operator)' --tail=20 --prefix=true -f 2>/dev/null || \
+	@kubectl logs -n $(NAMESPACE) -l 'app in (ambient-api-server,ambient-ui,ambient-control-plane)' --tail=20 --prefix=true -f 2>/dev/null || \
 		echo "$(COLOR_RED)✗$(COLOR_RESET) No pods found. Run 'make local-status' to check deployment."
 
-local-logs-backend: check-kubectl ## Show backend logs only
-	@kubectl logs -n $(NAMESPACE) -l app=backend-api --tail=100 -f
+local-logs-api-server: check-kubectl ## Show API server logs only
+	@kubectl logs -n $(NAMESPACE) -l app=ambient-api-server --tail=100 -f
 
-local-logs-frontend: check-kubectl ## Show frontend logs only
-	@kubectl logs -n $(NAMESPACE) -l app=frontend --tail=100 -f
+local-logs-ui: check-kubectl ## Show UI logs only
+	@kubectl logs -n $(NAMESPACE) -l app=ambient-ui --tail=100 -f
 
-local-logs-operator: check-kubectl ## Show operator logs only
-	@kubectl logs -n $(NAMESPACE) -l app=agentic-operator --tail=100 -f
+local-logs-control-plane: check-kubectl ## Show control plane logs only
+	@kubectl logs -n $(NAMESPACE) -l app=ambient-control-plane --tail=100 -f
 
-local-shell: check-kubectl ## Open shell in backend pod
-	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Opening shell in backend pod..."
-	@kubectl exec -it -n $(NAMESPACE) $$(kubectl get pod -n $(NAMESPACE) -l app=backend-api -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) -- /bin/sh 2>/dev/null || \
-		echo "$(COLOR_RED)✗$(COLOR_RESET) Backend pod not found or not ready"
+local-shell-api-server: check-kubectl ## Open shell in API server pod
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Opening shell in API server pod..."
+	@kubectl exec -it -n $(NAMESPACE) $$(kubectl get pod -n $(NAMESPACE) -l app=ambient-api-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) -- /bin/sh 2>/dev/null || \
+		echo "$(COLOR_RED)✗$(COLOR_RESET) API server pod not found or not ready"
 
-local-shell-frontend: check-kubectl ## Open shell in frontend pod
+local-shell-ui: check-kubectl ## Open shell in UI pod
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Opening shell in frontend pod..."
-	@kubectl exec -it -n $(NAMESPACE) $$(kubectl get pod -n $(NAMESPACE) -l app=frontend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) -- /bin/sh 2>/dev/null || \
+	@kubectl exec -it -n $(NAMESPACE) $$(kubectl get pod -n $(NAMESPACE) -l app=ambient-ui -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) -- /bin/sh 2>/dev/null || \
 		echo "$(COLOR_RED)✗$(COLOR_RESET) Frontend pod not found or not ready"
 
 local-test: local-test-quick ## Alias for local-test-quick (backward compatibility)
@@ -516,8 +530,8 @@ local-port-forward: check-kubectl ## Port-forward for direct access (8080→back
 	@echo "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
 	@echo ""
 	@trap 'echo ""; echo "$(COLOR_GREEN)✓$(COLOR_RESET) Port forwarding stopped"; exit 0' INT; \
-	(kubectl port-forward -n $(NAMESPACE) svc/backend-service 8080:8080 >/dev/null 2>&1 &); \
-	(kubectl port-forward -n $(NAMESPACE) svc/frontend-service 3000:3000 >/dev/null 2>&1 &); \
+	(kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server 8080:8000 >/dev/null 2>&1 &); \
+	(kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service 3000:3000 >/dev/null 2>&1 &); \
 	wait
 
 local-troubleshoot: check-kubectl ## Show troubleshooting information
@@ -543,17 +557,17 @@ local-troubleshoot: check-kubectl ## Show troubleshooting information
 
 deploy: ## Deploy to production Kubernetes cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Deploying to Kubernetes..."
-	@cd components/manifests && ./deploy.sh
+	@kubectl apply -k components/manifests/overlays/production -n $(NAMESPACE)
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Deployment complete"
 
 clean: ## Clean up Kubernetes resources
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Cleaning up..."
-	@cd components/manifests && ./deploy.sh clean
+	@kubectl delete -k components/manifests/overlays/production -n $(NAMESPACE) --ignore-not-found
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Cleanup complete"
 
 ##@ Kind Local Development
 
-# COMPONENT for dev/preflight: backend, ambient-ui, or comma-separated. Empty = port-forward only.
+# COMPONENT for dev/preflight: ambient-api-server, ambient-ui, or comma-separated. Empty = port-forward only.
 COMPONENT ?=
 # When true, `make dev` runs `kind-up` without prompting if the cluster is missing.
 AUTO_CLUSTER ?= false
@@ -707,7 +721,7 @@ dev-env-ambient-ui: check-kubectl ## Generate components/ambient-ui/.env.local f
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Wrote $$ENV_FILE"; \
 	fi
 
-dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=backend|ambient-ui for hot-reload
+dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=ambient-api-server|ambient-ui for hot-reload
 	@if [ -z "$(COMPONENT)" ]; then $(MAKE) --no-print-directory preflight-cluster; else $(MAKE) --no-print-directory preflight; fi
 	@set -e; \
 	if [ "$(CONTAINER_ENGINE)" = "podman" ]; then export KIND_EXPERIMENTAL_PROVIDER=podman; fi; \
@@ -741,7 +755,7 @@ dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=backend
 		echo ""; echo "$(COLOR_GREEN)✓$(COLOR_RESET) Stopped port-forward(s)."; \
 	}; \
 	trap cleanup INT TERM; \
-	pkill -f "port-forward.*ambient-api-server-service" 2>/dev/null || true; \
+	pkill -f "port-forward.*ambient-api-server" 2>/dev/null || true; \
 	pkill -f "port-forward.*keycloak-service" 2>/dev/null || true; \
 	WANT_KC="http://localhost:$(KIND_FWD_KEYCLOAK_PORT)"; \
 	CUR_KC=$$(kubectl get deployment keycloak -n $(NAMESPACE) -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KC_HOSTNAME")].value}' 2>/dev/null); \
@@ -753,7 +767,7 @@ dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=backend
 	else \
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Keycloak hostname already correct"; \
 	fi; \
-	kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server-service $(KIND_FWD_API_SERVER_PORT):8000 >/tmp/acp-dev-pf-api.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
+	kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server $(KIND_FWD_API_SERVER_PORT):8000 >/tmp/acp-dev-pf-api.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
 	kubectl port-forward -n $(NAMESPACE) svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >/tmp/acp-dev-pf-keycloak.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
 	sleep 2; \
 	echo "$(COLOR_GREEN)✓$(COLOR_RESET) API server  → http://localhost:$(KIND_FWD_API_SERVER_PORT)"; \
@@ -840,7 +854,7 @@ kind-up: preflight-cluster ## Start kind cluster and deploy the platform (LOCAL_
 		GOOGLE_APPLICATION_CREDENTIALS="$(GOOGLE_APPLICATION_CREDENTIALS)" \
 		./scripts/setup-vertex-kind.sh; \
 	fi
-	@if [ -f .dev-bootstrap.env ]; then \
+	@if [ -f .dev-bootstrap.env ] && [ -f ./scripts/bootstrap-workspace.sh ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Bootstrapping developer workspace..."; \
 		./scripts/bootstrap-workspace.sh || \
 		echo "$(COLOR_YELLOW)⚠$(COLOR_RESET)  Bootstrap failed (non-fatal). Run 'make dev-bootstrap' manually."; \
@@ -878,12 +892,12 @@ kind-login: check-kubectl check-local-context ## Set kubectl context, port-forwa
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) kubeconfig set to kind-$(KIND_CLUSTER_NAME)"
 	@echo ""
 	@echo "Starting port-forwards..."
-	@pkill -f "port-forward.*ambient-api-server-service" 2>/dev/null || true
-	@pkill -f "port-forward.*frontend-service" 2>/dev/null || true
-	@kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server-service $(KIND_FWD_API_SERVER_PORT):8000 >/tmp/pf-api-server.log 2>&1 & \
+	@pkill -f "port-forward.*ambient-api-server" 2>/dev/null || true
+	@pkill -f "port-forward.*ambient-ui-service" 2>/dev/null || true
+	@kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server $(KIND_FWD_API_SERVER_PORT):8000 >/tmp/pf-api-server.log 2>&1 & \
 		sleep 1; \
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) ambient-api-server → http://localhost:$(KIND_FWD_API_SERVER_PORT)"
-	@kubectl port-forward -n $(NAMESPACE) svc/frontend-service $(KIND_FWD_FRONTEND_PORT):3000 >/tmp/pf-frontend.log 2>&1 & \
+	@kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service $(KIND_FWD_FRONTEND_PORT):3000 >/tmp/pf-ui.log 2>&1 & \
 		sleep 1; \
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) frontend          → http://localhost:$(KIND_FWD_FRONTEND_PORT)"
 	@echo ""
@@ -912,14 +926,18 @@ kind-port-forward: check-kubectl check-local-context ## Port-forward kind servic
 	@echo "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
 	@echo ""
 	@trap 'echo ""; echo "$(COLOR_GREEN)✓$(COLOR_RESET) Port forwarding stopped"; exit 0' INT; \
-	(kubectl port-forward -n ambient-code svc/frontend-service $(KIND_FWD_FRONTEND_PORT):3000 >/dev/null 2>&1 &); \
-	(kubectl port-forward -n ambient-code svc/backend-service $(KIND_FWD_BACKEND_PORT):8080 >/dev/null 2>&1 &); \
+	(kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_FRONTEND_PORT):3000 >/dev/null 2>&1 &); \
+	(kubectl port-forward -n ambient-code svc/ambient-api-server $(KIND_FWD_BACKEND_PORT):8000 >/dev/null 2>&1 &); \
 	(kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_AMBIENT_UI_PORT):3000 >/dev/null 2>&1 &); \
 	(kubectl port-forward -n ambient-code svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >/dev/null 2>&1 &); \
 	wait
 
 dev-bootstrap: check-kubectl check-local-context ## Bootstrap developer workspace with API key and integrations
-	@./scripts/bootstrap-workspace.sh
+	@if [ -f ./scripts/bootstrap-workspace.sh ]; then \
+		./scripts/bootstrap-workspace.sh; \
+	else \
+		echo "$(COLOR_YELLOW)⚠$(COLOR_RESET)  scripts/bootstrap-workspace.sh not found — skipping bootstrap"; \
+	fi
 
 ##@ E2E Testing (Portable)
 
@@ -1023,7 +1041,7 @@ kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both f
 	CURRENT=$$(kubectl get deployment frontend -n $(NAMESPACE) -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SSO_ENABLED")].value}' 2>/dev/null); \
 	if [ "$$CURRENT" = "true" ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Disabling SSO auth (switching to legacy mode)..."; \
-		kubectl set env deployment/frontend -n $(NAMESPACE) SSO_ENABLED=false NEXT_PUBLIC_SSO_ENABLED=false; \
+		kubectl set env deployment/ambient-ui -n $(NAMESPACE) SSO_ENABLED=false NEXT_PUBLIC_SSO_ENABLED=false; \
 		kubectl port-forward -n $(NAMESPACE) svc/unleash 4242:4242 >/dev/null 2>&1 & PF=$$!; sleep 2; \
 		curl -sf -X POST "http://localhost:4242/api/admin/projects/default/features/sso-authentication/environments/development/off" \
 			-H "Authorization: $$UNLEASH_ADMIN_TOKEN" >/dev/null 2>&1 || true; \
@@ -1032,11 +1050,11 @@ kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both f
 	else \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Enabling SSO auth (switching to Keycloak OIDC)..."; \
 		SSO_HOST="http://localhost:$(KIND_FWD_FRONTEND_PORT)"; \
-		kubectl set env deployment/frontend -n $(NAMESPACE) \
+		kubectl set env deployment/ambient-ui -n $(NAMESPACE) \
 			SSO_ENABLED=true NEXT_PUBLIC_SSO_ENABLED=true \
 			SSO_REDIRECT_URI="$$SSO_HOST/api/auth/sso/callback" \
 			SSO_PUBLIC_ISSUER_URL="$$SSO_HOST/sso/realms/ambient-code"; \
-		kubectl set env deployment/backend-api -n $(NAMESPACE) \
+		kubectl set env deployment/ambient-api-server -n $(NAMESPACE) \
 			SSO_PUBLIC_ISSUER_URL="$$SSO_HOST/sso/realms/ambient-code"; \
 		kubectl set env deployment/keycloak -n $(NAMESPACE) \
 			KC_HOSTNAME="$$SSO_HOST/sso"; \
@@ -1048,10 +1066,10 @@ kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both f
 	fi
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for rollouts..."
 	@kubectl rollout status deployment/keycloak -n $(NAMESPACE) --timeout=120s >/dev/null 2>&1 || true
-	@kubectl rollout status deployment/frontend -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1
+	@kubectl rollout status deployment/ambient-ui -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1
 	@# Restart backend after Keycloak is ready (OIDC discovery needs Keycloak)
-	@kubectl rollout restart deployment/backend-api -n $(NAMESPACE) >/dev/null 2>&1 || true
-	@kubectl rollout status deployment/backend-api -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 || true
+	@kubectl rollout restart deployment/ambient-api-server -n $(NAMESPACE) >/dev/null 2>&1 || true
+	@kubectl rollout status deployment/ambient-api-server -n $(NAMESPACE) --timeout=60s >/dev/null 2>&1 || true
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Done. Restart port-forwards if needed: make kind-port-forward"
 
 kind-status: check-kind ## Show all kind clusters and their port assignments
@@ -1296,16 +1314,16 @@ _auto-port-forward: ## Internal: Auto-start port forwarding on macOS with Podman
 		echo ""; \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Starting port forwarding in background..."; \
 		echo "  Waiting for services to be ready..."; \
-		kubectl wait --for=condition=ready pod -l app=backend-api -n $(NAMESPACE) --timeout=60s 2>/dev/null || true; \
-		kubectl wait --for=condition=ready pod -l app=frontend -n $(NAMESPACE) --timeout=60s 2>/dev/null || true; \
+		kubectl wait --for=condition=ready pod -l app=ambient-api-server -n $(NAMESPACE) --timeout=60s 2>/dev/null || true; \
+		kubectl wait --for=condition=ready pod -l app=ambient-ui -n $(NAMESPACE) --timeout=60s 2>/dev/null || true; \
 		mkdir -p /tmp/ambient-code; \
-		kubectl port-forward -n $(NAMESPACE) svc/backend-service 8080:8080 > /tmp/ambient-code/port-forward-backend.log 2>&1 & \
-		echo $$! > /tmp/ambient-code/port-forward-backend.pid; \
-		kubectl port-forward -n $(NAMESPACE) svc/frontend-service 3000:3000 > /tmp/ambient-code/port-forward-frontend.log 2>&1 & \
-		echo $$! > /tmp/ambient-code/port-forward-frontend.pid; \
+		kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server 8080:8000 > /tmp/ambient-code/port-forward-api-server.log 2>&1 & \
+		echo $$! > /tmp/ambient-code/port-forward-api-server.pid; \
+		kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service 3000:3000 > /tmp/ambient-code/port-forward-ui.log 2>&1 & \
+		echo $$! > /tmp/ambient-code/port-forward-ui.pid; \
 		sleep 1; \
-		if ps -p $$(cat /tmp/ambient-code/port-forward-backend.pid 2>/dev/null) > /dev/null 2>&1 && \
-		   ps -p $$(cat /tmp/ambient-code/port-forward-frontend.pid 2>/dev/null) > /dev/null 2>&1; then \
+		if ps -p $$(cat /tmp/ambient-code/port-forward-api-server.pid 2>/dev/null) > /dev/null 2>&1 && \
+		   ps -p $$(cat /tmp/ambient-code/port-forward-ui.pid 2>/dev/null) > /dev/null 2>&1; then \
 			echo "$(COLOR_GREEN)✓$(COLOR_RESET) Port forwarding started"; \
 			echo "  $(COLOR_BOLD)Access at:$(COLOR_RESET)"; \
 			echo "    Frontend: $(COLOR_BLUE)http://localhost:3000$(COLOR_RESET)"; \
@@ -1317,14 +1335,14 @@ _auto-port-forward: ## Internal: Auto-start port forwarding on macOS with Podman
 	fi
 
 local-stop-port-forward: ## Stop background port forwarding
-	@if [ -f /tmp/ambient-code/port-forward-backend.pid ]; then \
+	@if [ -f /tmp/ambient-code/port-forward-api-server.pid ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Stopping port forwarding..."; \
-		if ps -p $$(cat /tmp/ambient-code/port-forward-backend.pid 2>/dev/null) > /dev/null 2>&1; then \
-			kill $$(cat /tmp/ambient-code/port-forward-backend.pid) 2>/dev/null || true; \
+		if ps -p $$(cat /tmp/ambient-code/port-forward-api-server.pid 2>/dev/null) > /dev/null 2>&1; then \
+			kill $$(cat /tmp/ambient-code/port-forward-api-server.pid) 2>/dev/null || true; \
 			echo "  Stopped backend port forward"; \
 		fi; \
-		if ps -p $$(cat /tmp/ambient-code/port-forward-frontend.pid 2>/dev/null) > /dev/null 2>&1; then \
-			kill $$(cat /tmp/ambient-code/port-forward-frontend.pid) 2>/dev/null || true; \
+		if ps -p $$(cat /tmp/ambient-code/port-forward-ui.pid 2>/dev/null) > /dev/null 2>&1; then \
+			kill $$(cat /tmp/ambient-code/port-forward-ui.pid) 2>/dev/null || true; \
 			echo "  Stopped frontend port forward"; \
 		fi; \
 		rm -f /tmp/ambient-code/port-forward-*.pid /tmp/ambient-code/port-forward-*.log; \

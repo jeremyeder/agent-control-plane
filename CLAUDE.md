@@ -1,18 +1,19 @@
-# Ambient Code Platform
+# Agent Control Plane
 
-Kubernetes-native AI automation platform that orchestrates agentic sessions through containerized microservices. Built with Go (backend, operator), NextJS + Shadcn (frontend), Python (runner), and Kubernetes CRDs.
+Kubernetes-native AI automation platform that orchestrates agentic sessions through containerized microservices. Built with Go (API server, control plane), NextJS + Shadcn (UI), and Python (runner). PostgreSQL is the source of truth; the control plane reconciles via gRPC watch streams.
 
-> Technical artifacts still use "vteam" for backward compatibility.
+> Some RBAC manifests still reference the `vteam.ambient-code` API group for backward compatibility.
 
 ## Structure
 
-- `components/operator/` - Go Kubernetes controller, watches CRDs and creates Jobs
+- `components/ambient-api-server/` - Go REST API microservice (rh-trex-ai framework), PostgreSQL-backed
+- `components/ambient-control-plane/` - Go service, watches API server via gRPC and reconciles sessions into K8s Jobs
+- `components/ambient-ui/` - NextJS + Shadcn web UI for session management and monitoring
+- `components/ambient-mcp/` - MCP server integration
 - `components/runners/ambient-runner/` - Python runner executing Claude Code CLI in Job pods
 - `components/ambient-cli/` - Go CLI (`acpctl`), manages agentic sessions from the command line
-- `components/public-api/` - Stateless HTTP gateway, proxies to backend (no direct K8s access)
-- `components/ambient-api-server/` - Go REST API microservice (rh-trex-ai framework), PostgreSQL-backed
-- `components/ambient-sdk/` - Go + Python client SDK for the platform's public REST API
-- `components/open-webui-llm/` - Open WebUI LLM integration
+- `components/ambient-sdk/` - Go, Python, and TypeScript client SDKs generated from the OpenAPI spec
+- `components/credential-sidecars/` - Per-provider credential sidecar containers (GitHub, Jira, K8s, Google)
 - `components/manifests/` - Kustomize-based deployment manifests and overlays
 - `docs/` - Astro Starlight documentation site
 - `specs/` - Desired state of the system ([sessions](specs/sessions/), [agents](specs/agents/), [control-plane](specs/control-plane/), [integrations](specs/integrations/), [standards](specs/standards/))
@@ -21,16 +22,16 @@ Kubernetes-native AI automation platform that orchestrates agentic sessions thro
 
 ## Key Files
 
-- CRD definitions: `components/manifests/base/crds/agenticsessions-crd.yaml`, `projectsettings-crd.yaml`
-- Session lifecycle: `components/operator/internal/handlers/sessions.go`
-- K8s client init: `components/operator/internal/config/config.go`
+- Control plane reconciler: `components/ambient-control-plane/internal/reconciler/kube_reconciler.go`
+- K8s client init: `components/ambient-control-plane/internal/config/config.go`
 - Runner entry point: `components/runners/ambient-runner/main.py`
+- RBAC: ClusterRoles in `components/manifests/base/rbac/` grant `vteam.ambient-code` API group access (legacy CRs created as side-effects, not used as source of truth)
 
 ## Session Flow
 
 ```
-User Creates Session → Backend Creates CR → Operator Spawns Job →
-Pod Runs Claude CLI → Results Stored in CR → UI Displays Progress
+User Creates Session → API Server Persists to DB → Control Plane Spawns Job →
+Pod Runs AI Agent → Results Stream to API Server → UI Displays Progress
 ```
 
 ## Commands
@@ -38,7 +39,7 @@ Pod Runs Claude CLI → Results Stored in CR → UI Displays Progress
 ```shell
 make build-all                # Build all container images
 make deploy                   # Deploy to cluster
-make test                     # Run tests
+make test-all                 # Run all tests
 make lint                     # Lint code
 make kind-up                  # Start local Kind cluster
 make kind-rebuild              # Rebuild images + redeploy to running cluster
@@ -50,8 +51,11 @@ make benchmark                # Run component benchmark harness
 ### Per-Component
 
 ```shell
-# Operator (Go)
-cd components/operator && gofmt -l . && go vet ./... && golangci-lint run
+# Control Plane (Go)
+cd components/ambient-control-plane && gofmt -l . && go vet ./... && golangci-lint run
+
+# API Server (Go)
+cd components/ambient-api-server && gofmt -l . && go vet ./... && golangci-lint run
 
 # Runner (Python)
 cd components/runners/ambient-runner && uv venv && uv pip install -e .
@@ -70,7 +74,7 @@ make benchmark
 make benchmark FORMAT=tsv
 
 # Single component
-make benchmark COMPONENT=operator MODE=cold
+make benchmark COMPONENT=ambient-control-plane MODE=cold
 ```
 
 Benchmark notes:
@@ -90,7 +94,7 @@ Cross-cutting rules that apply across ALL components. Component-specific convent
 - **No `panic()` in production**: Return explicit `fmt.Errorf` with context
 - **No `any` types in frontend**: Use proper types, `unknown`, or generic constraints
 - **Feature flags strongly recommended**: Gate new features behind Unleash flags. Use `/unleash-flag` to set up
-- **No new CRDs**: Existing CRDs (AgenticSession, ProjectSettings) are grandfathered. For new persistent storage, confirm with the user whether to use repo files or PostgreSQL — do not default to K8s custom resources
+- **PostgreSQL for persistent storage**: Sessions, projects, and settings live in the API server's database. For new persistent storage, confirm with the user whether to use repo files or PostgreSQL
 - **Conventional commits**: Squashed on merge to `main`
 - **Design for extensibility before adding items**: When building infrastructure that will have
   things added to it (menus, config schemas, API surfaces), build the extensibility mechanism
@@ -114,7 +118,7 @@ Cross-cutting rules that apply across ALL components. Component-specific convent
 - **Restricted SecurityContext on all containers**: `runAsNonRoot`, drop `ALL` capabilities, `readOnlyRootFilesystem`
 
 Component-specific conventions:
-- Operator: [conventions](specs/standards/control-plane/conventions.spec.md)
+- Control Plane: [conventions](specs/standards/control-plane/conventions.spec.md)
 - Security: [security standards](specs/standards/security/security.spec.md)
 
 ## Pre-commit Hooks
@@ -146,4 +150,3 @@ When both the self-review and the hook pass, apply the `ambient-code:self-review
 
 ## Convention Authority
 
-This file and [BOOKMARKS.md](BOOKMARKS.md) are the authoritative source of project conventions. The [ACP Constitution](.specify/memory/constitution.md) covers spec-kit-specific governance (commit discipline thresholds, context engineering, amendment process) but defers to this file for shared conventions. If they conflict, this file wins. Spec-kit is optional tooling, not mandatory.

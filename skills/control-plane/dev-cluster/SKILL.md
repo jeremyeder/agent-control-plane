@@ -28,12 +28,10 @@ The Ambient Code Platform consists of these containerized components:
 
 | Component | Location | Image Name | Purpose |
 |-----------|----------|------------|---------|
-| **Backend** | `components/backend` | `acp_backend:latest` | Go API for K8s CRD management |
-| **Frontend** | `components/frontend` | `acp_frontend:latest` | NextJS web interface |
-| **Operator** | `components/operator` | `acp_operator:latest` | Kubernetes operator (Go) |
+| **Backend** | `components/ambient-api-server` | `acp_api_server:latest` | Go REST + gRPC API (PostgreSQL-backed) |
+| **Frontend** | `components/ambient-ui` | `acp_ambient_ui:latest` | NextJS web interface |
+| **Operator** | `components/ambient-control-plane` | `acp_control_plane:latest` | Kubernetes operator (Go) |
 | **Runner** | `components/runners/ambient-runner` | `acp_claude_runner:latest` | Python Claude Code runner |
-| **State Sync** | `components/runners/state-sync` | `acp_state_sync:latest` | S3 persistence service |
-| **Public API** | `components/public-api` | `acp_public_api:latest` | External API gateway |
 
 ## Development Cluster: Kind
 
@@ -86,9 +84,9 @@ The platform uses **Unleash** for feature flags, running in-cluster. Some endpoi
 To test workflow changes from a different branch of `ambient-code/workflows`:
 
 ```bash
-kubectl set env deployment/backend-api -n ambient-code \
+kubectl set env deployment/ambient-api-server -n ambient-code \
   OOTB_WORKFLOWS_BRANCH="your-branch-name"
-kubectl rollout restart deployment/backend-api -n ambient-code
+kubectl rollout restart deployment/ambient-api-server -n ambient-code
 ```
 
 The backend caches workflows for 5 minutes. Restart clears the cache immediately.
@@ -98,7 +96,7 @@ The backend caches workflows for 5 minutes. Restart clears the cache immediately
 Testing Google Drive or other Google integrations requires OAuth credentials on the backend:
 
 ```bash
-kubectl set env deployment/backend-api -n ambient-code \
+kubectl set env deployment/ambient-api-server -n ambient-code \
   GOOGLE_OAUTH_CLIENT_ID="your-client-id" \
   GOOGLE_OAUTH_CLIENT_SECRET="your-secret" \
   OAUTH_STATE_SECRET="$(openssl rand -hex 32)" \
@@ -142,7 +140,7 @@ fi
 
 **Always pass `CONTAINER_ENGINE=` to make commands:**
 ```bash
-make build-frontend CONTAINER_ENGINE=docker
+make build-ambient-ui CONTAINER_ENGINE=docker
 make build-all CONTAINER_ENGINE=docker
 ```
 
@@ -176,12 +174,10 @@ git diff --name-only main...HEAD
 ```
 
 Determine which components are affected:
-- Changes in `components/backend/` → backend
-- Changes in `components/frontend/` → frontend
-- Changes in `components/operator/` → operator
+- Changes in `components/ambient-api-server/` → backend
+- Changes in `components/ambient-ui/` → frontend
+- Changes in `components/ambient-control-plane/` → operator
 - Changes in `components/runners/ambient-runner/` → runner
-- Changes in `components/runners/state-sync/` → state-sync
-- Changes in `components/public-api/` → public-api
 
 ### Step 2: Explain the Plan
 Tell the user:
@@ -206,12 +202,10 @@ Note: By default, kind uses production Quay.io images. We'll need to:
 
 ```bash
 # Build specific components — always pass CONTAINER_ENGINE
-make build-backend CONTAINER_ENGINE=$CONTAINER_ENGINE
-make build-frontend CONTAINER_ENGINE=$CONTAINER_ENGINE
-make build-operator CONTAINER_ENGINE=$CONTAINER_ENGINE
+make build-api-server CONTAINER_ENGINE=$CONTAINER_ENGINE
+make build-ambient-ui CONTAINER_ENGINE=$CONTAINER_ENGINE
+make build-control-plane CONTAINER_ENGINE=$CONTAINER_ENGINE
 make build-runner CONTAINER_ENGINE=$CONTAINER_ENGINE
-make build-state-sync CONTAINER_ENGINE=$CONTAINER_ENGINE
-make build-public-api CONTAINER_ENGINE=$CONTAINER_ENGINE
 
 # Or build all at once
 make build-all CONTAINER_ENGINE=$CONTAINER_ENGINE
@@ -233,17 +227,17 @@ make kind-rebuild
 
 **Or load individual images:**
 ```bash
-kind load docker-image localhost/acp_backend:latest --name $KIND_CLUSTER_NAME
-kind load docker-image localhost/acp_frontend:latest --name $KIND_CLUSTER_NAME
-kind load docker-image localhost/acp_operator:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_api_server:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_ambient_ui:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_control_plane:latest --name $KIND_CLUSTER_NAME
 ```
 
 ### Step 5: Verify Deployment
 ```bash
 # Wait for rollout to complete
-kubectl rollout status deployment/backend -n ambient-code
-kubectl rollout status deployment/frontend -n ambient-code
-kubectl rollout status deployment/operator -n ambient-code
+kubectl rollout status deployment/ambient-api-server -n ambient-code
+kubectl rollout status deployment/ambient-ui -n ambient-code
+kubectl rollout status deployment/ambient-control-plane -n ambient-code
 
 # Check pod status
 kubectl get pods -n ambient-code
@@ -292,7 +286,7 @@ for attempt in 1 2 3; do
     sleep 3
   else
     echo "Attempt $attempt: frontend returned HTTP $STATUS — check pod logs"
-    kubectl logs -l app=frontend -n ambient-code --tail=20
+    kubectl logs -l app=ambient-ui -n ambient-code --tail=20
     break
   fi
 done
@@ -313,7 +307,7 @@ Access the platform at:
 
 To view logs:
   kubectl logs -f -l app=backend -n ambient-code
-  kubectl logs -f -l app=frontend -n ambient-code
+  kubectl logs -f -l app=ambient-ui -n ambient-code
   kubectl logs -f -l app=operator -n ambient-code
 
 To teardown:
@@ -334,17 +328,17 @@ make kind-rebuild
 
 ### "Just rebuild the backend"
 ```bash
-make build-backend CONTAINER_ENGINE=$CONTAINER_ENGINE
-kind load docker-image localhost/acp_backend:latest --name $KIND_CLUSTER_NAME
-kubectl set image deployment/backend backend=localhost/acp_backend:latest -n ambient-code
-kubectl rollout restart deployment/backend -n ambient-code
-kubectl rollout status deployment/backend -n ambient-code
+make build-api-server CONTAINER_ENGINE=$CONTAINER_ENGINE
+kind load docker-image localhost/acp_api_server:latest --name $KIND_CLUSTER_NAME
+kubectl set image deployment/ambient-api-server backend=localhost/acp_api_server:latest -n ambient-code
+kubectl rollout restart deployment/ambient-api-server -n ambient-code
+kubectl rollout status deployment/ambient-api-server -n ambient-code
 ```
 
 ### "Show me the logs"
 ```bash
 kubectl logs -f -l app=backend -n ambient-code
-kubectl logs -f -l app=frontend -n ambient-code
+kubectl logs -f -l app=ambient-ui -n ambient-code
 kubectl logs -f -l app=operator -n ambient-code
 ```
 
@@ -371,9 +365,9 @@ kubectl get deployments -n ambient-code
 make build-all CONTAINER_ENGINE=$CONTAINER_ENGINE
 
 # Load images into kind
-kind load docker-image localhost/acp_backend:latest --name $KIND_CLUSTER_NAME
-kind load docker-image localhost/acp_frontend:latest --name $KIND_CLUSTER_NAME
-kind load docker-image localhost/acp_operator:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_api_server:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_ambient_ui:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_control_plane:latest --name $KIND_CLUSTER_NAME
 
 # Update image pull policy
 kubectl patch deployment backend -n ambient-code -p '{"spec":{"template":{"spec":{"containers":[{"name":"backend","imagePullPolicy":"Never"}]}}}}'
@@ -419,14 +413,14 @@ make kind-port-forward
 **Solution:**
 ```bash
 # Force rebuild
-make build-backend  # (or whatever component)
+make build-api-server  # (or whatever component)
 
 # Reload into cluster
-kind load docker-image localhost/acp_backend:latest --name $KIND_CLUSTER_NAME
+kind load docker-image localhost/acp_api_server:latest --name $KIND_CLUSTER_NAME
 
 # Force restart
-kubectl rollout restart deployment/backend -n ambient-code
-kubectl rollout status deployment/backend -n ambient-code
+kubectl rollout restart deployment/ambient-api-server -n ambient-code
+kubectl rollout status deployment/ambient-api-server -n ambient-code
 
 # Verify new pods are running
 kubectl get pods -n ambient-code -l app=backend
@@ -457,10 +451,10 @@ For **frontend-only changes**, skip image rebuilds entirely. Run NextJS locally 
 
 ```bash
 # Terminal 1: port-forward backend from kind cluster
-kubectl port-forward svc/backend-service $KIND_FWD_BACKEND_PORT:8080 -n ambient-code
+kubectl port-forward svc/ambient-api-server $KIND_FWD_BACKEND_PORT:8080 -n ambient-code
 
 # Terminal 2: set up frontend with auth token
-cd components/frontend
+cd components/ambient-ui
 npm install  # first time only
 
 # Create .env.local (gitignored — do NOT commit, contains a live cluster token)
@@ -516,7 +510,6 @@ make benchmark COMPONENT=backend MODE=warm
 - If `reports/benchmarks/` is not writable in the current environment, the harness will fall back to a temp directory and print a warning.
 - Session benchmarking is **contract-only** in v1 (`bench_session_*` stubs in `scripts/benchmarks/bench-manifest.sh`).
 - Start with the **smallest relevant benchmark**:
-  - backend/operator/public-api change -> `MODE=warm COMPONENT=<component> REPEATS=1`
   - frontend contributor setup -> `MODE=cold COMPONENT=frontend REPEATS=1`
   - only run all components when you explicitly need the whole matrix
 - Treat preflight failures as useful environment signals; do not work around them unless the user asks.
@@ -588,12 +581,12 @@ User: "Test this changeset in kind"
 
 Assistant (using dev-cluster skill):
 1. Checks git status → finds backend changes
-2. Explains: "I see changes in components/backend. I'll build the backend image, create a kind cluster, and deploy your changes."
-3. Runs: `make build-backend`
+2. Explains: "I see changes in components/ambient-api-server. I'll build the backend image, create a kind cluster, and deploy your changes."
+3. Runs: `make build-api-server`
 4. Runs: `make kind-up`
-5. Loads image: `kind load docker-image localhost/acp_backend:latest --name $KIND_CLUSTER_NAME`
+5. Loads image: `kind load docker-image localhost/acp_api_server:latest --name $KIND_CLUSTER_NAME`
 6. Updates deployment with local image and ImagePullPolicy: Never
-7. Verifies: `kubectl rollout status deployment/backend -n ambient-code`
+7. Verifies: `kubectl rollout status deployment/ambient-api-server -n ambient-code`
 8. Provides access URL and log commands
 
 Result: User can test their backend changes at `http://localhost:$KIND_FWD_FRONTEND_PORT` (run `make kind-status` to see the assigned port)
@@ -621,7 +614,7 @@ Assistant (using dev-cluster skill):
 4. Checks events: `kubectl get events -n ambient-code --sort-by='.lastTimestamp'`
 5. Identifies issue (e.g., missing env var, bad configuration)
 6. Suggests fix
-7. After fix applied, verifies: `kubectl rollout status deployment/backend -n ambient-code`
+7. After fix applied, verifies: `kubectl rollout status deployment/ambient-api-server -n ambient-code`
 
 Result: Issue diagnosed and resolved
 
@@ -636,8 +629,8 @@ This skill knows all the relevant Makefile targets:
 - `make kind-port-forward` - Port-forward services to localhost
 - `make kind-status` - Show cluster status and port assignments
 - `make build-all` - Build all container images
-- `make build-backend` - Build backend image only
-- `make build-frontend` - Build frontend image only
-- `make build-operator` - Build operator image only
+- `make build-api-server` - Build backend image only
+- `make build-ambient-ui` - Build frontend image only
+- `make build-control-plane` - Build operator image only
 - `make local-status` - Check pod status
 - `make local-logs` - Follow all component logs

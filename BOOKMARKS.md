@@ -57,8 +57,7 @@ Component-specific conventions loaded by review agents on demand.
 
 | Document | Purpose |
 |----------|---------|
-| [ACP Constitution](.specify/memory/constitution.md) | 10 core principles: K8s-native, security, type safety, TDD, modularity, observability, lifecycle, context engineering, data access, commit discipline |
-| [Runner Constitution](.specify/constitutions/runner.md) | Version pinning, automated freshness, image discipline, schema sync, bridge modularity |
+| [Runner Constitution](specs/agents/runner-constitution.md) | Version pinning, automated freshness, image discipline, schema sync, bridge modularity |
 | [SDD Preflight](.github/workflows/sdd-preflight.yml) | CI workflow enforcing constitution compliance on PRs |
 
 ## Architecture Decisions
@@ -79,9 +78,8 @@ Component-specific conventions loaded by review agents on demand.
 
 | Guide | Purpose |
 |-------|---------|
-| [Operator README](components/operator/README.md) | Operator development, watch patterns, reconciliation loop |
+| [Control Plane](components/ambient-control-plane/) | Kubernetes controller, reconciliation loop |
 | [Runner README](components/runners/ambient-runner/README.md) | Python runner, Claude Code SDK integration |
-| [Public API README](components/public-api/README.md) | Stateless gateway, token forwarding, input validation |
 | [API Server Guide](components/ambient-api-server/CLAUDE.md) | rh-trex-ai REST API, plugin system, code generation |
 | [SDK Guide](components/ambient-sdk/CLAUDE.md) | Go + Python client libraries for the public API |
 | [CLI README](components/ambient-cli/README.md) | acpctl CLI for managing agentic sessions |
@@ -94,7 +92,7 @@ Component-specific conventions loaded by review agents on demand.
 | [Kind](docs/internal/developer/local-development/kind.md) | Recommended local dev setup (Kubernetes in Docker) |
 | [OpenShift](docs/internal/developer/local-development/openshift.md) | OpenShift Local (CRC) setup for OCP-specific features |
 | [Hybrid](docs/internal/developer/local-development/hybrid.md) | Run components locally with breakpoint debugging |
-| [Manifests](components/manifests/README.md) | Kustomize overlay structure, deploy.sh usage |
+| [Manifests](components/manifests/README.md) | Kustomize overlay structure and deployment |
 
 ## Testing
 
@@ -114,14 +112,8 @@ Component-specific conventions loaded by review agents on demand.
 
 | Document | Purpose |
 |----------|---------|
-| [Declarative Session Reconciliation](docs/internal/design/declarative-session-reconciliation.md) | Session lifecycle via declarative status transitions |
-| [Runner-Operator Contract](docs/internal/design/runner-operator-contract.md) | Interface contract between operator and runner pods |
-| [Session Status Redesign](docs/internal/design/session-status-redesign.md) | Status field evolution and phase transitions |
-| [Session Initialization Flow](docs/internal/design/session-initialization-flow.md) | How sessions are initialized and configured |
-| [Spec-Runtime Synchronization](docs/internal/design/spec-runtime-synchronization.md) | Keeping spec and runtime state in sync |
 | [Agent Runtime Registry](docs/internal/design/agent-runtime-registry-plan.md) | Agent runtime registry architecture |
 | [CLI Runners](docs/internal/design/cli-runners-plan.md) | CLI runner design and implementation |
-| [Status Update Comparison](docs/internal/design/status-update-comparison.md) | Comparison of status update approaches |
 
 ## Dependency Automation
 

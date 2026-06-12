@@ -5,7 +5,7 @@ The platform uses [Unleash](https://www.getunleash.io/) for optional feature tog
 ## Overview
 
 - **Frontend**: Next.js proxy at `/api/feature-flags` forwards to Unleash so the client key is never exposed. Use `useFlag()` / `useVariant()` from `@/lib/feature-flags` in client components.
-- **Backend**: Go SDK initializes when `UNLEASH_URL` and `UNLEASH_CLIENT_KEY` are set. Use `handlers.FeatureEnabled()` or `handlers.FeatureEnabledForRequest()` in handlers.
+- **API Server**: Go SDK initializes when `UNLEASH_URL` and `UNLEASH_CLIENT_KEY` are set. Use `handlers.FeatureEnabled()` or `handlers.FeatureEnabledForRequest()` in handlers.
 
 Create toggles in the Unleash UI; enable or disable them without redeploying.
 
@@ -52,7 +52,7 @@ Add `UNLEASH_URL`, `UNLEASH_CLIENT_KEY`, and optionally `UNLEASH_APP_NAME` to th
 
 ---
 
-## Backend
+## API Server
 
 ### Environment variables
 
@@ -105,12 +105,12 @@ Turn the feature on or off in the Unleash UI; no redeploy needed.
 
 ### Dependency
 
-Backend uses `github.com/Unleash/unleash-go-sdk/v5`. Ensure it is in `go.mod` and run `go mod tidy` or `go get github.com/Unleash/unleash-go-sdk/v5` if needed.
+API server uses `github.com/Unleash/unleash-go-sdk/v5`. Ensure it is in `go.mod` and run `go mod tidy` or `go get github.com/Unleash/unleash-go-sdk/v5` if needed.
 
 ### Reference
 
-- `components/backend/featureflags/featureflags.go` – Unleash client init, `IsEnabled`, `IsEnabledWithContext`
-- `components/backend/handlers/featureflags.go` – `FeatureEnabled`, `FeatureEnabledForRequest`
+- `components/ambient-api-server/featureflags/featureflags.go` – Unleash client init, `IsEnabled`, `IsEnabledWithContext`
+- `components/ambient-api-server/handlers/featureflags.go` – `FeatureEnabled`, `FeatureEnabledForRequest`
 
 ---
 
@@ -229,8 +229,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Reference
 
-- `components/backend/featureflags/featureflags.go` – Unleash SDK init, fail-open/closed defaults
-- `components/backend/handlers/featureflags_admin.go` – Admin API handlers, workspace override logic
-- `components/backend/cmd/sync_flags.go` – Flag sync to Unleash at startup
-- `components/frontend/src/components/workspace-sections/feature-flags-section.tsx` – Admin UI component
-- `components/frontend/src/services/queries/use-feature-flags-admin.ts` – React Query hooks
+- `components/ambient-api-server/featureflags/featureflags.go` – Unleash SDK init, fail-open/closed defaults
+- `components/ambient-api-server/handlers/featureflags_admin.go` – Admin API handlers, workspace override logic
+- `components/ambient-api-server/cmd/sync_flags.go` – Flag sync to Unleash at startup
+- `components/ambient-ui/src/components/workspace-sections/feature-flags-section.tsx` – Admin UI component
+- `components/ambient-ui/src/services/queries/use-feature-flags-admin.ts` – React Query hooks

@@ -27,7 +27,6 @@ Welcome to the Ambient Code Platform developer guide! This section covers everyt
 
    **Full guide:** [Kind Development](local-development/kind.md)
 
-   **Alternatives:** [CRC](local-development/crc.md) (OpenShift-specific) • [Comparison](local-development/)
 
 3. **Make your changes and test:**
    ```bash
@@ -42,21 +41,20 @@ Welcome to the Ambient Code Platform developer guide! This section covers everyt
 ### Local Development
 - **[Local Development Guide](local-development/)** - Choose your approach
   - [Kind](local-development/kind.md) - **Recommended** (fast, matches CI/CD)
-  - [CRC](local-development/crc.md) - OpenShift-specific features only
   - [Hybrid](local-development/hybrid.md) - Run components locally for debugging
 
 ### Code Standards
 - **[Code Standards](../../CLAUDE.md)** - Comprehensive development standards
-  - Backend & Operator standards (Go)
+  - API Server & Control Plane standards (Go)
   - Frontend standards (TypeScript/React)
   - Security patterns
   - Error handling
 
 ### Component Development
 Each component has detailed development documentation:
-- [Frontend README](../../components/frontend/README.md) - Next.js development
-- [Backend README](../../components/backend/README.md) - Go API development
-- [Operator README](../../components/operator/README.md) - Controller development
+- [Frontend README](../../components/ambient-ui/README.md) - Next.js development
+- [Backend README](../../components/ambient-api-server/README.md) - Go API server development
+- [Control Plane](../../components/ambient-control-plane/) - Controller development
 - [Runner README](../../components/runners/claude-code-runner/README.md) - Python runner
 
 ### Testing
@@ -73,8 +71,8 @@ Each component has detailed development documentation:
 - [System diagrams](../architecture/diagrams/)
 
 **Key Concepts:**
-- Custom Resource Definitions (AgenticSession, ProjectSettings, RFEWorkflow)
-- Operator reconciliation patterns
+- API resources (sessions, projects, settings) backed by PostgreSQL
+- Control plane reconciliation patterns
 - Multi-tenant namespace isolation
 - User token authentication
 
@@ -113,8 +111,8 @@ See [CONTRIBUTING.md](../../CONTRIBUTING.md) for full workflow details.
 ### Build
 ```bash
 make build-all              # Build all components
-make build-frontend         # Build frontend only
-make build-backend          # Build backend only
+make build-ambient-ui      # Build UI only
+make build-api-server      # Build API server only
 ```
 
 ### Local Development
@@ -135,13 +133,13 @@ make lint                   # Run linters
 ### Code Quality
 ```bash
 # Go code
-cd components/backend
+cd components/ambient-api-server
 gofmt -w .
 go vet ./...
 golangci-lint run
 
 # Frontend code
-cd components/frontend
+cd components/ambient-ui
 npm run lint
 npm run build
 ```

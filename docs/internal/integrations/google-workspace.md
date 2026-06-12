@@ -45,7 +45,7 @@ Credentials are automatically removed when the session ends. To disconnect earli
 Administrators need to configure Google OAuth credentials once:
 
 1. Create a Google Cloud project and OAuth 2.0 credentials
-2. Set authorized redirect URI to: `https://your-vteam-backend/oauth2callback`
+2. Set authorized redirect URI to: `https://your-ambient-api-server/oauth2callback`
 3. Create a Kubernetes Secret in the `ambient-code` namespace:
 
 ```bash
@@ -64,7 +64,7 @@ kubectl create secret generic google-workflow-app-secret \
 4. Restart the backend to pick up the new credentials:
 
 ```bash
-kubectl rollout restart deployment backend-api -n ambient-code
+kubectl rollout restart deployment ambient-api-server -n ambient-code
 ```
 
 ## Security & Privacy

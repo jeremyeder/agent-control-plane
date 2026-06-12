@@ -54,7 +54,7 @@ Podman:  ports 8080/8443 → http://acp.local:8080
 ```
 e2e/manifests/
 ├── Production manifests (copied as-is):
-│   ├── crds/ (all CRDs)
+│   ├── rbac/ (RBAC manifests)
 │   ├── rbac/ (all RBAC)
 │   ├── backend-deployment.yaml
 │   └── operator-deployment.yaml
@@ -199,8 +199,8 @@ open e2e/cypress/videos/acp.cy.ts.mp4
 ### View Pod Logs
 
 ```bash
-kubectl logs -n ambient-code -l app=frontend
-kubectl logs -n ambient-code -l app=backend-api
+kubectl logs -n ambient-code -l app=ambient-ui
+kubectl logs -n ambient-code -l app=ambient-api-server
 ```
 
 ### Check Ingress

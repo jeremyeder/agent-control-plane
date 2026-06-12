@@ -46,7 +46,7 @@ The SDK's contract is defined entirely by the API server's OpenAPI spec (`../amb
 
 | Visible to SDK | Hidden from SDK |
 |---|---|
-| `/v1/sessions` endpoints | AgenticSession CRD schema |
+| `/v1/sessions` endpoints | PostgreSQL schema and internal data model |
 | Bearer token + project header | Kubernetes RBAC policies |
 | Session status lifecycle | Job scheduling, pod creation |
 | JSON request/response shapes | CR spec/status fields |
@@ -97,7 +97,7 @@ The Python client is a class wrapping `httpx.Client` with:
                    └─────────┘
 ```
 
-- **pending**: CR created, waiting for operator to schedule a Job
+- **pending**: Session created, waiting for control plane to schedule a Job
 - **running**: Job pod is executing the Claude Code CLI
 - **completed**: Task finished successfully; `result` field populated
 - **failed**: Task failed; `error` field populated

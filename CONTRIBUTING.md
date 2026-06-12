@@ -1,6 +1,6 @@
-# Contributing to Ambient Code Platform
+# Contributing to Agent Control Plane
 
-Thank you for your interest in contributing to Ambient Code Platform (formerly known as vTeam)! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing to Agent Control Plane (formerly known as vTeam)! This document provides guidelines and instructions for contributing to the project.
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 
 ## Ways to Contribute
 
-There are many ways to contribute to Ambient Code Platform:
+There are many ways to contribute to Agent Control Plane:
 
 ### Report Bugs
 
@@ -72,9 +72,9 @@ Code contributions should:
 
 Before contributing, ensure you have:
 
-- Go 1.24+ (for backend/operator development)
-- Node.js 20+ and npm (for frontend development)
-- Python 3.11+ (for runner development)
+- Go 1.25+ (for API server and control plane development)
+- Node.js 20+ and npm (for UI development)
+- Python 3.12+ (for runner development)
 - Podman or Docker (for building containers)
 - Kind and kubectl (for local development)
 - Git for version control
@@ -84,12 +84,12 @@ Before contributing, ensure you have:
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/vTeam.git
-   cd vTeam
+   git clone https://github.com/YOUR_USERNAME/agent-control-plane.git
+   cd agent-control-plane
    ```
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/ambient-code/vTeam.git
+   git remote add upstream https://github.com/openshift-online/agent-control-plane.git
    ```
 
 ### Install Git Hooks (Recommended)
@@ -110,8 +110,7 @@ Or run the installation script directly:
 
 - **File hygiene** - trailing whitespace, EOF fixer, YAML validation, large file check, merge conflict markers, private key detection
 - **Python** - `ruff format` + `ruff check --fix` (runners and scripts)
-- **Go** - `gofmt`, `go vet`, `golangci-lint` (backend, operator, public-api)
-- **Frontend** - ESLint (TypeScript/JavaScript)
+- **Go** - `gofmt`, `go vet`, `golangci-lint` (API server, control plane, CLI)
 - **Branch protection** - blocks commits to `main`/`master`/`production`
 
 **What runs on push:**
@@ -201,24 +200,24 @@ Then create a Pull Request on GitHub.
 
 ## Code Standards
 
-### Go Code (Backend & Operator)
+### Go Code (API Server & Control Plane)
 
 **Formatting:**
 ```bash
 # Auto-format your code
-gofmt -w components/backend components/operator
+gofmt -w components/ambient-api-server components/ambient-control-plane
 ```
 
 **Quality Checks:**
 ```bash
-# Backend
-cd components/backend
+# API Server
+cd components/ambient-api-server
 gofmt -l .                    # Check formatting (should output nothing)
 go vet ./...                  # Detect suspicious constructs
 golangci-lint run            # Run comprehensive linting
 
-# Operator
-cd components/operator
+# Control Plane
+cd components/ambient-control-plane
 gofmt -l .
 go vet ./...
 golangci-lint run
@@ -243,7 +242,7 @@ See [CLAUDE.md](CLAUDE.md) for comprehensive backend/operator development standa
 ### Frontend Code (NextJS)
 
 ```bash
-cd components/frontend
+cd components/ambient-ui
 npm run lint                  # ESLint checks
 npm run build                 # Ensure builds without errors/warnings
 ```
@@ -258,8 +257,6 @@ npm run build                 # Ensure builds without errors/warnings
 - All buttons must show loading states
 - All lists must have empty states
 - All nested pages must have breadcrumbs
-
-See [components/frontend/DESIGN_GUIDELINES.md](components/frontend/DESIGN_GUIDELINES.md) for complete frontend standards.
 
 ### Python Code (Runners)
 
@@ -282,29 +279,25 @@ ruff check --fix .
 
 ## Testing Requirements
 
-### Backend Tests
+### API Server Tests
 
 ```bash
-cd components/backend
-make test              # All tests
-make test-unit         # Unit tests only
-make test-contract     # Contract tests only
-make test-integration  # Integration tests (requires k8s cluster)
-make test-coverage     # Generate coverage report
+cd components/ambient-api-server
+make test
 ```
 
-### Operator Tests
+### Control Plane Tests
 
 ```bash
-cd components/operator
+cd components/ambient-control-plane
 go test ./... -v
 ```
 
-### Frontend Tests
+### UI Tests
 
 ```bash
-cd components/frontend
-npm test
+cd components/ambient-ui
+npx vitest run
 ```
 
 **Testing Guidelines:**
@@ -355,7 +348,7 @@ Your PR should include:
 
 ## Local Development Setup
 
-The recommended way to develop and test Ambient Code Platform locally is using **Kind (Kubernetes in Docker)**. This provides a lightweight Kubernetes environment that matches our CI/CD setup.
+The recommended way to develop and test Agent Control Plane locally is using **Kind (Kubernetes in Docker)**. This provides a lightweight Kubernetes environment that matches our CI/CD setup.
 
 ### Installing Kind and Prerequisites
 
@@ -394,7 +387,7 @@ make kind-up
 
 This command will:
 - Create Kind cluster (~30 seconds)
-- Deploy all components (backend, frontend, operator)
+- Deploy all components (API server, control plane, UI)
 - Deploy Keycloak with a pre-configured dev realm
 - Set up port forwarding
 - Load container images
@@ -434,9 +427,9 @@ kubectl get svc -n ambient-code
 
 **View logs:**
 ```bash
-kubectl logs -n ambient-code deployment/backend-api -f
-kubectl logs -n ambient-code deployment/frontend -f
-kubectl logs -n ambient-code deployment/agentic-operator -f
+kubectl logs -n ambient-code deployment/ambient-api-server -f
+kubectl logs -n ambient-code deployment/ambient-ui -f
+kubectl logs -n ambient-code deployment/ambient-control-plane -f
 ```
 
 **Cleanup:**
@@ -446,7 +439,7 @@ make kind-down         # Delete Kind cluster
 
 **Run tests:**
 ```bash
-make test-e2e          # Run E2E tests
+make test-e2e-local    # Run E2E tests with Kind
 ```
 
 ## Troubleshooting
@@ -527,7 +520,7 @@ kubectl get services -n ambient-code
 kubectl get ingress -n ambient-code
 
 # Test directly
-kubectl port-forward -n ambient-code svc/frontend-service 3000:3000
+kubectl port-forward -n ambient-code svc/ambient-ui-service 3000:3000
 ```
 
 **Networking issues:**
@@ -562,4 +555,4 @@ If you're stuck or have questions:
 
 ## License
 
-By contributing to Ambient Code Platform, you agree that your contributions will be licensed under the same license as the project (MIT License).
+By contributing to Agent Control Plane, you agree that your contributions will be licensed under the same license as the project (MIT License).

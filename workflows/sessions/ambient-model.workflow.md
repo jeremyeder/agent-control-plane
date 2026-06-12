@@ -38,7 +38,7 @@ Spec (ambient-model.spec.md)
                     ├─► BE  (REST handlers, DAOs, migrations)
                     ├─► CLI (commands, output formatters)
                     ├─► CP  (gRPC middleware, interceptors)
-                    ├─► Operator (CRD reconcilers, Job spawning)
+                    ├─► Control Plane (gRPC reconciler, Job spawning)
                     ├─► Runners (Python SDK calls, gRPC push)
                     └─► FE  (TypeScript API layer, UI components)
 ```
@@ -88,7 +88,7 @@ Compare the spec against the current state of the code. For each component, ask:
 | **BE**       | Read `plugins/<kind>/model.go` for every Kind. Compare field-by-field against the Spec. Drift here is the most common source of gaps. |
 | **CP**       | Does middleware handle new RBAC scopes and auth requirements?                                         |
 | **CLI**      | Does `acpctl` implement every route marked ✅ in the spec CLI table?                                  |
-| **Operator** | Do CRD reconcilers handle Agent-scoped session start?                                                 |
+| **Operator** | Does the control plane handle Agent-scoped session start?                                                 |
 | **Runners**  | Does the runner drain inbox at session start and push correct event types?                            |
 | **FE**       | Do API service layer, queries, and components exist for all new entities?                             |
 
@@ -150,7 +150,7 @@ Decompose the gap table into per-agent work items, sequenced by pipeline order:
 **Wave 5 — CLI + Operator + Runners** (parallel after Wave 3 + BE)
 
 - **CLI**: implement all 🔲 commands that are now unblocked — see `.claude/context/cli-development.md`
-- **Operator**: CRD reconciler updates for Agent start — see `.claude/context/operator-development.md`
+- **Control Plane: reconciler updates for Agent start`
 - **Runners**: inbox drain at session start, correct event types — see `.claude/context/control-plane-development.md`
 - **Security gate (Operator):** all Job pods set `SecurityContext` with `AllowPrivilegeEscalation: false`, capabilities dropped; OwnerReferences set on all child resources
 - **Acceptance:** CLI `make test` passes; Operator `go vet ./... && golangci-lint run` clean; Runner `python -m pytest tests/` passes; all tested in kind cluster
@@ -231,7 +231,7 @@ http://session-{KubeCrName}.{KubeNamespace}.svc.cluster.local:8001
 
 The `Session` model stores `KubeCrName` and `KubeNamespace` — both are available from the DB. The runner listens on port `8001` (set via `AGUI_PORT` env var by the operator; default in runner code is `8000` but the operator overrides it).
 
-This pattern is used by `components/backend/websocket/agui_proxy.go` (the V1 backend) and by `plugins/sessions/handler.go` in the ambient-api-server. The sessions plugin implements `proxyToRunner(w, r, url)` which copies method, headers, body, and response verbatim. All workspace, files, git, repos/status, and AGUI sub-resource endpoints use this pattern. When the runner is unavailable, handlers return a stub (empty body) or `503 Service Unavailable`.
+This pattern is used by `components/ambient-api-server/` (the V1 backend) and by `plugins/sessions/handler.go` in the ambient-api-server. The sessions plugin implements `proxyToRunner(w, r, url)` which copies method, headers, body, and response verbatim. All workspace, files, git, repos/status, and AGUI sub-resource endpoints use this pattern. When the runner is unavailable, handlers return a stub (empty body) or `503 Service Unavailable`.
 
 ### Implementing `GET /sessions/{id}/events` (Runner SSE Proxy)
 
@@ -450,7 +450,7 @@ Each wave maps to one or more component development guides. Read the guide for t
 | Wave 5 | Runner | `.claude/context/control-plane-development.md` (Runner ↔ CP contract section) |
 | Wave 6 | Frontend | `.claude/context/frontend-development.md` |
 
-The old Gin/K8s backend (`components/backend/`) is covered by `.claude/context/backend-development.md` — only relevant if you are modifying the V1 backend.
+The V1 Gin/K8s backend has been removed. The current API server is `components/ambient-api-server/`.
 
 ---
 

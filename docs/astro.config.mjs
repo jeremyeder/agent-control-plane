@@ -2,16 +2,24 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import rehypeMermaid from 'rehype-mermaid';
 
-const isNetlify = !!process.env.NETLIFY;
+const getBasePath = () => {
+  if (process.env.PR_PREVIEW_PATH) {
+    return process.env.PR_PREVIEW_PATH;
+  }
+  if (process.env.NETLIFY) {
+    return '/';
+  }
+  return process.env.CI ? '/agent-control-plane/' : '/';
+};
 
 export default defineConfig({
-  site: isNetlify
+  site: process.env.NETLIFY
     ? process.env.URL
-    : 'https://ambient-code.github.io',
-  base: isNetlify ? '/' : '/platform/',
+    : 'https://openshift-online.github.io',
+  base: getBasePath(),
   integrations: [
     starlight({
-      title: 'Ambient Code Platform',
+      title: 'Agent Control Plane',
       favicon: '/favicon.ico',
       description:
         'AI-powered automation platform for intelligent agentic workflows',
@@ -19,12 +27,12 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/ambient-code/platform',
+          href: 'https://github.com/openshift-online/agent-control-plane',
         },
       ],
       editLink: {
         baseUrl:
-          'https://github.com/ambient-code/platform/edit/main/docs/',
+          'https://github.com/openshift-online/agent-control-plane/edit/main/docs/',
       },
       sidebar: [
         {
@@ -39,12 +47,13 @@ export default defineConfig({
         {
           label: 'Core Concepts',
           items: [
-            { slug: 'concepts/workspaces' },
+            { slug: 'concepts/credentials' },
+            { slug: 'concepts/projects' },
+            { slug: 'concepts/agents' },
             { slug: 'concepts/sessions' },
-            { slug: 'concepts/integrations' },
+            { slug: 'concepts/scheduled-sessions' },
             { slug: 'concepts/context-and-artifacts' },
             { slug: 'concepts/workflows' },
-            { slug: 'concepts/scheduled-sessions' },
           ],
         },
         {
@@ -53,7 +62,6 @@ export default defineConfig({
             { slug: 'workflows' },
             { slug: 'workflows/bugfix' },
             { slug: 'workflows/triage' },
-            { slug: 'workflows/spec-kit' },
             { slug: 'workflows/prd-rfe' },
             { slug: 'workflows/custom' },
           ],
@@ -62,12 +70,13 @@ export default defineConfig({
           label: 'Features',
           items: [
             { slug: 'features/session-sharing' },
+            { slug: 'features/coderabbit' },
           ],
         },
         {
           label: 'Guides',
           items: [
-            { slug: 'guides/migrating-shared-sessions' },
+            { slug: 'guides/custom-ca-bundle' },
           ],
         },
         {
@@ -75,7 +84,6 @@ export default defineConfig({
           items: [
             { slug: 'extensions/github-action' },
             { slug: 'extensions/mcp-server' },
-            { slug: 'extensions/public-api' },
           ],
         },
         {
@@ -89,6 +97,7 @@ export default defineConfig({
           label: 'Development',
           items: [
             { slug: 'development' },
+            { slug: 'development/architecture' },
           ],
         },
       ],

@@ -2,26 +2,24 @@
 
 Guides for deploying the Ambient Code Platform to various environments.
 
-## 🚀 Deployment Guides
+## Deployment Guides
 
 ### Production Deployment
-- **[OpenShift Deployment](../OPENSHIFT_DEPLOY.md)** - Deploy to production OpenShift cluster
-- **[OAuth Configuration](../OPENSHIFT_OAUTH.md)** - Set up OpenShift OAuth authentication
+- **[OpenShift Deployment](OPENSHIFT_DEPLOY.md)** - Deploy to production OpenShift cluster
+- **[OAuth Configuration](OPENSHIFT_OAUTH.md)** - Set up OpenShift OAuth authentication (legacy; being replaced by SSO/OIDC)
+- **[SSO Migration](../../workflows/security/sso-migration.workflow.md)** - Keycloak SSO/OIDC authentication (recommended over OAuth proxy)
 
 ### Configuration
 - **[Git Authentication](git-authentication.md)** - Configure Git credentials for runners
 - **[GitHub App Setup](../GITHUB_APP_SETUP.md)** - GitHub App integration
-- **[GitLab Integration](../gitlab-integration.md)** - GitLab configuration
 
 ### Observability
 - **[Langfuse Deployment](langfuse.md)** - LLM observability and tracing
-- **[Operator Metrics](../operator-metrics-visualization.md)** - Operator monitoring (if exists)
 
 ### Storage
-- **[S3 Storage Configuration](../s3-storage-configuration.md)** - S3-compatible storage setup (if exists)
-- **[MinIO Quickstart](../minio-quickstart.md)** - MinIO deployment (if exists)
+- **[S3 Storage Configuration](s3-storage-configuration.md)** - S3-compatible storage setup
 
-## 📋 Deployment Checklist
+## Deployment Checklist
 
 ### Prerequisites
 - [ ] OpenShift or Kubernetes cluster with admin access
@@ -32,12 +30,9 @@ Guides for deploying the Ambient Code Platform to various environments.
 ### Basic Deployment
 
 ```bash
-# 1. Prepare environment
-cp components/manifests/env.example components/manifests/.env
-# Edit .env and set ANTHROPIC_API_KEY
-
+# 1. Choose an overlay (e.g., openshift-dev, production, kind)
 # 2. Deploy
-make deploy
+oc apply -k components/manifests/overlays/<your-overlay>
 
 # 3. Verify
 oc get pods -n ambient-code
@@ -59,14 +54,14 @@ oc get routes -n ambient-code
    - Deploy Langfuse: [Langfuse Guide](langfuse.md)
    - Configure runner to send traces
 
-## 🔧 Deployment Options
+## Deployment Options
 
 ### Using Default Images
 
 Fastest deployment using pre-built images from `quay.io/ambient_code`:
 
 ```bash
-make deploy
+oc apply -k components/manifests/overlays/<your-overlay>
 ```
 
 ### Building Custom Images
@@ -80,26 +75,28 @@ make build-all CONTAINER_ENGINE=podman
 # Push to registry
 make push-all REGISTRY=quay.io/your-username
 
-# Deploy with custom images
-make deploy CONTAINER_REGISTRY=quay.io/your-username
+# Deploy with custom images (override in your overlay's kustomization.yaml images section)
 ```
 
 ### Custom Namespace
 
-Deploy to a different namespace:
+Set the namespace in your overlay's `kustomization.yaml`:
 
-```bash
-make deploy NAMESPACE=my-namespace
+```yaml
+namespace: my-namespace
 ```
 
-## 🔐 Security Configuration
+## Security Configuration
 
 ### Authentication
 
-**Production (Required):**
-- OpenShift OAuth with user tokens
+**Production (Recommended):**
+- SSO/OIDC via Keycloak (see [SSO Migration](../../workflows/security/sso-migration.workflow.md))
 - Namespace-scoped RBAC
 - No shared credentials
+
+**Production (Legacy):**
+- OpenShift OAuth proxy sidecar (see [OAuth Configuration](OPENSHIFT_OAUTH.md))
 
 **Local Development (Insecure):**
 - Authentication disabled
@@ -111,7 +108,7 @@ make deploy NAMESPACE=my-namespace
 The platform uses namespace-scoped RBAC:
 - Each project maps to a Kubernetes namespace
 - Users need appropriate permissions in namespace
-- Backend uses user tokens (not service account)
+- API server uses user tokens (not service account)
 
 See [ADR-0002: User Token Authentication](../adr/0002-user-token-authentication.md)
 
@@ -121,32 +118,32 @@ See [ADR-0002: User Token Authentication](../adr/0002-user-token-authentication.
 - **Git Credentials**: Per-project secrets
 - **OAuth Tokens**: Managed by OpenShift OAuth
 
-## 📊 Monitoring & Observability
+## Monitoring & Observability
 
 ### Health Checks
 
 ```bash
-# Backend health
-curl https://backend-route/health
+# API server health
+curl https://<api-server-route>/health
 
 # Frontend accessibility
-curl https://frontend-route/
+curl https://<frontend-route>/
 
-# Operator status
-oc get pods -n ambient-code -l app=agentic-operator
+# Control plane status
+oc get pods -n ambient-code -l app=ambient-control-plane
 ```
 
 ### Logs
 
 ```bash
-# Backend logs
-oc logs -n ambient-code deployment/backend-api -f
+# API server logs
+oc logs -n ambient-code deployment/ambient-api-server -f
 
 # Frontend logs
-oc logs -n ambient-code deployment/frontend -f
+oc logs -n ambient-code deployment/ambient-ui -f
 
-# Operator logs
-oc logs -n ambient-code deployment/agentic-operator -f
+# Control plane logs
+oc logs -n ambient-code deployment/ambient-control-plane -f
 
 # Runner job logs (in project namespaces)
 oc logs -n <project-namespace> job/<job-name>
@@ -158,12 +155,12 @@ oc logs -n <project-namespace> job/<job-name>
 - Langfuse for LLM observability
 - OpenShift monitoring integration
 
-## 🧹 Cleanup
+## Cleanup
 
 ### Uninstall Platform
 
 ```bash
-make clean
+oc delete -k components/manifests/overlays/<your-overlay>
 ```
 
 ### Remove Namespace
@@ -175,20 +172,15 @@ oc delete namespace ambient-code
 ### Full Cleanup
 
 ```bash
-# Uninstall platform
-make clean
-
-# Remove CRDs
-oc delete crd agenticsessions.vteam.ambient-code
-oc delete crd projectsettings.vteam.ambient-code
-oc delete crd rfeworkflows.vteam.ambient-code
+# Remove the kustomize-deployed resources
+oc delete -k components/manifests/overlays/<your-overlay>
 
 # Remove cluster-level RBAC
-oc delete clusterrole ambient-code-operator
-oc delete clusterrolebinding ambient-code-operator
+oc delete clusterrole ambient-control-plane
+oc delete clusterrolebinding ambient-control-plane
 ```
 
-## 🆘 Troubleshooting
+## Troubleshooting
 
 ### Pods Not Starting
 
@@ -207,7 +199,7 @@ oc logs <pod-name> -n ambient-code
 
 ```bash
 # Check image pull secrets
-oc get deployment backend-api -n ambient-code -o jsonpath='{.spec.template.spec.imagePullSecrets}'
+oc get deployment ambient-api-server -n ambient-code -o jsonpath='{.spec.template.spec.imagePullSecrets}'
 
 # Verify image exists
 ```
@@ -216,36 +208,33 @@ oc get deployment backend-api -n ambient-code -o jsonpath='{.spec.template.spec.
 
 ```bash
 # Check route
-oc get route frontend-route -n ambient-code
+oc get route ambient-ui -n ambient-code
 
 # Check service
-oc get svc frontend-service -n ambient-code
+oc get svc ambient-ui-service -n ambient-code
 
 # Test service directly
-oc port-forward svc/frontend-service 3000:3000 -n ambient-code
+oc port-forward svc/ambient-ui-service 3000:3000 -n ambient-code
 ```
 
-### Operator Not Creating Jobs
+### Control Plane Not Creating Jobs
 
 ```bash
-# Check operator logs
-oc logs -n ambient-code deployment/agentic-operator -f
+# Check control plane logs
+oc logs -n ambient-code deployment/ambient-control-plane -f
 
-# Check CRDs are installed
-oc get crd agenticsessions.vteam.ambient-code
-
-# Verify operator has permissions
-oc get clusterrolebinding ambient-code-operator
+# Verify control plane has permissions
+oc get clusterrolebinding ambient-control-plane
 ```
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Architecture Overview](../architecture/) - System design
 - [Component Documentation](../../components/) - Component-specific guides
 - [Local Development](../developer/local-development/) - Development environments
 - [Testing](../testing/) - Test suite documentation
 
-## 🤝 Contributing
+## Contributing
 
 When adding deployment features:
 - Update relevant deployment guide

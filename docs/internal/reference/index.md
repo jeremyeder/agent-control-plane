@@ -1,19 +1,19 @@
 # Reference Documentation
 
-This section provides comprehensive reference material for the Ambient Code Platform, including API documentation, Custom Resource specifications, and configuration details.
+This section provides comprehensive reference material for the Ambient Code Platform, including API documentation, API specifications, and configuration details.
 
 ## Quick Reference
 
 ### **[Glossary](glossary.md)** 📖
 Definitions of terms, concepts, and acronyms used throughout the Ambient Code Platform system and documentation.
 
-## Custom Resources
+## Data Model
 
-The platform uses Kubernetes Custom Resource Definitions (CRDs) for declarative automation management.
+The platform uses a PostgreSQL-backed REST API as its data model. The following resource types are managed by the API server.
 
 ### AgenticSession
 
-The primary Custom Resource for AI-powered automation tasks.
+The primary resource for AI-powered automation tasks.
 
 **API Version**: `vteam.ambient-code/v1alpha1`
 **Kind**: `AgenticSession`
@@ -101,7 +101,7 @@ spec:
 
 ### RFEWorkflow
 
-Specialized Custom Resource for Request for Enhancement workflows using a 7-agent council process. This is an advanced feature for structured engineering refinement.
+Specialized resource for Request for Enhancement workflows using a 7-agent council process. This is an advanced feature for structured engineering refinement.
 
 **API Version**: `vteam.ambient-code/v1alpha1`
 **Kind**: `RFEWorkflow`
@@ -115,7 +115,7 @@ The backend API provides HTTP endpoints for managing projects and sessions.
 ### Base URLs
 
 - **Development**: `http://localhost:8080`
-- **Production**: `https://vteam-backend.<apps-domain>`
+- **Production**: `https://ambient-api-server.<apps-domain>`
 
 ### Authentication
 
@@ -155,13 +155,13 @@ Content-Type: application/json
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| GET | `/health` | Backend health check |
+| GET | `/health` | API server health check |
 
 ### Example: Creating an AgenticSession via API
 
 ```bash
 curl -X POST \
-  https://vteam-backend.apps.example.com/api/projects/my-project/agentic-sessions \
+  https://ambient-api-server.apps.example.com/api/projects/my-project/agentic-sessions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -186,7 +186,7 @@ curl -X POST \
 
 Real-time session updates are available via WebSocket connection to the backend. This enables live status monitoring in the web interface.
 
-**Connection URL**: `wss://vteam-backend.<apps-domain>/ws`
+**Connection URL**: `wss://ambient-api-server.<apps-domain>/ws`
 
 Messages are broadcasted when AgenticSession status changes (phase transitions, completion, errors).
 
@@ -220,7 +220,7 @@ When you create an AgenticSession, the platform automatically creates these Kube
 
 - **Job**: Manages the pod lifecycle for session execution
 - **Pod**: Runs the Claude Code runner container
-- **PersistentVolumeClaim**: Provides workspace storage for repository clones
+- **EmptyDir + S3 sync**: Ephemeral workspace storage with S3 persistence
 - **Secret**: Contains API keys (created by ProjectSettings)
 
 All resources use **OwnerReferences** for automatic cleanup when the AgenticSession is deleted.
@@ -231,7 +231,7 @@ All resources use **OwnerReferences** for automatic cleanup when the AgenticSess
 
 | Operation | Target Time | Notes |
 |-----------|-------------|-------|
-| Session Creation (API) | < 2 seconds | Creates CR, returns immediately |
+| Session Creation (API) | < 2 seconds | Persists to DB, returns immediately |
 | Job Pod Startup | 10-30 seconds | Image pull, volume mount |
 | Simple Code Analysis | 2-5 minutes | Depends on repository size |
 | Complex Refactoring | 10-30 minutes | Multiple file changes |
@@ -251,7 +251,7 @@ Default limits (configurable via ProjectSettings):
 
 **Major Features:**
 
-- Kubernetes operator-based orchestration with Custom Resources
+- API server with gRPC-driven control plane for Kubernetes orchestration
 - Next.js frontend with Shadcn UI and React Query
 - Multi-repository support for cross-repo analysis
 - Interactive and headless execution modes
@@ -259,18 +259,18 @@ Default limits (configurable via ProjectSettings):
 
 **Breaking Changes:**
 
-- Complete architecture rewrite: moved from LlamaDeploy to Kubernetes operators
+- Complete architecture rewrite: moved from LlamaDeploy to REST API + gRPC-driven control plane
 - API endpoints now use project-scoped pattern: `/api/projects/:project/*`
 - Frontend migrated from @llamaindex/server to Next.js with Shadcn UI
 - Authentication now uses OpenShift OAuth with user bearer tokens
-- Configuration moved from files to Kubernetes Custom Resources (ProjectSettings)
+- Configuration managed via API server (ProjectSettings stored in PostgreSQL)
 
 ## Support
 
 ### Getting Help
 
-- **Documentation Issues**: [GitHub Issues](https://github.com/ambient-code/platform/issues)
-- **API Questions**: [GitHub Discussions](https://github.com/ambient-code/platform/discussions)
+- **Documentation Issues**: [GitHub Issues](https://github.com/openshift-online/agent-control-plane/issues)
+- **API Questions**: [GitHub Discussions](https://github.com/openshift-online/agent-control-plane/discussions)
 - **Bug Reports**: Include system info, error messages, and reproduction steps
 
 ### Gathering System Information
@@ -304,4 +304,4 @@ kubectl logs job/<session-name> -n <namespace>
 
 ---
 
-This reference documentation is maintained alongside the codebase. Found an error or missing information? [Submit a pull request](https://github.com/ambient-code/platform/pulls) or [create an issue](https://github.com/ambient-code/platform/issues).
+This reference documentation is maintained alongside the codebase. Found an error or missing information? [Submit a pull request](https://github.com/openshift-online/agent-control-plane/pulls) or [create an issue](https://github.com/openshift-online/agent-control-plane/issues).

@@ -74,8 +74,8 @@ Verify it resolves cleanly. Packages may resolve newer than your `>=` pins — t
 When `claude-agent-sdk` is bumped, update the frontend Zod schema and form to match.
 
 **Files:**
-- `components/frontend/src/components/claude-agent-options/schema.ts`
-- `components/frontend/src/components/claude-agent-options/options-form.tsx`
+- `components/ambient-ui/src/components/claude-agent-options/schema.ts`
+- `components/ambient-ui/src/components/claude-agent-options/options-form.tsx`
 
 **Steps:**
 1. Inspect the new SDK types:
@@ -204,7 +204,7 @@ The skill replaces the need to read and follow this document manually. Invoke wi
 
 Use the platform's own session scheduling to run the skill on a cron:
 
-1. Create a Project Settings CRD with a scheduled session:
+1. Create a scheduled session via the API server:
    ```yaml
    schedule:
      cron: "0 9 1 * *"  # First of each month at 09:00
