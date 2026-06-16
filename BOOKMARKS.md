@@ -30,18 +30,9 @@ Desired state of the system, organized by capability domain.
 | [Runner](specs/agents/runner.spec.md) | agents | Runner subprocess lifecycle, bridges, gRPC/HTTP endpoints |
 | [MCP Server](specs/integrations/mcp-server.spec.md) | integrations | MCP tool definitions, sidecar and public endpoint modes |
 | [Security](specs/security/security.spec.md) | security | Identity boundaries, credential authorization, per-session isolation, design decisions |
+| [OpenShell Sandbox](specs/security/openshell-sandbox.spec.md) | security | Agent subprocess sandbox: network namespace, Landlock, seccomp, TLS proxy, OPA policy |
 
 Feature specs remain in numbered directories under `specs/` (e.g., `specs/001-*/spec.md`).
-
-## Workflows
-
-Agent-consumable procedures — step-by-step implementation workflows.
-
-| Workflow | Domain | Purpose |
-|----------|--------|---------|
-| [Ambient Model](workflows/sessions/ambient-model.workflow.md) | sessions | Spec-driven implementation pipeline for data model changes |
-| [Control Plane](workflows/control-plane/control-plane.workflow.md) | control-plane | CP + Runner implementation workflow |
-| [MCP Server](workflows/integrations/mcp-server.workflow.md) | integrations | MCP server implementation workflow |
 
 ## Standards
 
