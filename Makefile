@@ -169,7 +169,7 @@ help: ## Display this help message
 
 ##@ Building
 
-build-all: build-runner build-api-server build-control-plane build-mcp build-ambient-ui ## Build all container images
+build-all: build-runner build-api-server build-control-plane build-mcp build-ambient-ui build-credential-sidecars ## Build all container images
 
 build-ambient-ui: ## Build ambient-ui image
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building ambient-ui with $(CONTAINER_ENGINE)..."
@@ -944,11 +944,11 @@ kind-port-forward: check-kubectl check-local-context ## Port-forward kind servic
 	@echo ""
 	@echo "$(COLOR_YELLOW)Press Ctrl+C to stop$(COLOR_RESET)"
 	@echo ""
-	@trap 'echo ""; echo "$(COLOR_GREEN)✓$(COLOR_RESET) Port forwarding stopped"; exit 0' INT; \
-	(kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_FRONTEND_PORT):3000 >/dev/null 2>&1 &); \
-	(kubectl port-forward -n ambient-code svc/ambient-api-server $(KIND_FWD_BACKEND_PORT):8000 >/dev/null 2>&1 &); \
-	(kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_AMBIENT_UI_PORT):3000 >/dev/null 2>&1 &); \
-	(kubectl port-forward -n ambient-code svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >/dev/null 2>&1 &); \
+	@trap 'echo ""; echo "$(COLOR_GREEN)✓$(COLOR_RESET) Port forwarding stopped"; kill 0; exit 0' INT TERM; \
+	kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_FRONTEND_PORT):3000 >/dev/null 2>&1 & \
+	kubectl port-forward -n ambient-code svc/ambient-api-server $(KIND_FWD_BACKEND_PORT):8000 >/dev/null 2>&1 & \
+	kubectl port-forward -n ambient-code svc/ambient-ui-service $(KIND_FWD_AMBIENT_UI_PORT):3000 >/dev/null 2>&1 & \
+	kubectl port-forward -n ambient-code svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >/dev/null 2>&1 & \
 	wait
 
 dev-bootstrap: check-kubectl check-local-context ## Bootstrap developer workspace with API key and integrations
@@ -1243,13 +1243,14 @@ check-architecture: ## Validate build architecture matches host
 
 _kind-load-images: ## Internal: Load images into kind cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading images into kind ($(KIND_CLUSTER_NAME))..."
-		echo "  Loading $(KIND_IMAGE_PREFIX)$$img..."; \
+	@for img in $(RUNNER_IMAGE) $(API_SERVER_IMAGE) $(CONTROL_PLANE_IMAGE) $(MCP_IMAGE) $(AMBIENT_UI_IMAGE) $(GITHUB_MCP_IMAGE) $(JIRA_MCP_IMAGE) $(K8S_MCP_IMAGE) $(GOOGLE_MCP_IMAGE); do \
+		echo "  Loading $$img -> $(KIND_IMAGE_PREFIX)$$img..."; \
+		$(CONTAINER_ENGINE) tag $$img $(KIND_IMAGE_PREFIX)$$img 2>/dev/null || true; \
 		if [ -n "$(KIND_HOST)" ] || [ "$(CONTAINER_ENGINE)" = "podman" ]; then \
 			$(CONTAINER_ENGINE) save $(KIND_IMAGE_PREFIX)$$img | \
 			$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
 			ctr --namespace=k8s.io images import -; \
 		else \
-			docker tag $$img $(KIND_IMAGE_PREFIX)$$img 2>/dev/null || true; \
 			kind load docker-image $(KIND_IMAGE_PREFIX)$$img --name $(KIND_CLUSTER_NAME); \
 		fi; \
 	done
