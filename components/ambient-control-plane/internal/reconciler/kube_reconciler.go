@@ -109,7 +109,7 @@ type SimpleKubeReconciler struct {
 	kube        *kubeclient.KubeClient
 	projectKube *kubeclient.KubeClient
 	provisioner kubeclient.NamespaceProvisioner
-	gateway     *openshell.GatewayClient
+	gateway     gatewayClient
 	cfg         KubeReconcilerConfig
 	logger      zerolog.Logger
 }
@@ -121,7 +121,7 @@ func (r *SimpleKubeReconciler) nsKube() *kubeclient.KubeClient {
 	return r.kube
 }
 
-func NewKubeReconciler(factory *SDKClientFactory, kube *kubeclient.KubeClient, projectKube *kubeclient.KubeClient, provisioner kubeclient.NamespaceProvisioner, gateway *openshell.GatewayClient, cfg KubeReconcilerConfig, logger zerolog.Logger) *SimpleKubeReconciler {
+func NewKubeReconciler(factory *SDKClientFactory, kube *kubeclient.KubeClient, projectKube *kubeclient.KubeClient, provisioner kubeclient.NamespaceProvisioner, gateway gatewayClient, cfg KubeReconcilerConfig, logger zerolog.Logger) *SimpleKubeReconciler {
 	return &SimpleKubeReconciler{
 		factory:     factory,
 		kube:        kube,
@@ -189,8 +189,14 @@ func (r *SimpleKubeReconciler) Reconcile(ctx context.Context, event informer.Res
 			return r.provisionSession(ctx, session)
 		case PhaseStopping:
 			return r.deprovisionSession(ctx, session, PhaseStopped)
-		case PhaseCompleted, PhaseFailed:
+		case PhaseFailed:
 			return r.deprovisionSession(ctx, session, session.Phase)
+		case PhaseCompleted:
+			// FIXME(#223): Enable gateway sandbox cleanup once session lifecycle is ironed out.
+			// Merge back into the PhaseFailed case above to auto-delete the sandbox on completion.
+			if !r.cfg.OpenShellUseGateway {
+				return r.deprovisionSession(ctx, session, session.Phase)
+			}
 		}
 	case informer.EventDeleted:
 		return r.cleanupSession(ctx, session)
@@ -308,20 +314,6 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 
 	entrypoint := r.resolveEntrypoint(agent)
 
-	existing, err := r.gateway.GetSandbox(ctx, namespace, sbxName)
-	if err == nil && existing != nil && existing.Sandbox != nil {
-		r.logger.Debug().Str("sandbox", sbxName).Msg("sandbox already exists")
-		go r.execAfterReady(namespace, sbxName, session.ID, entrypoint)
-		r.updateSessionPhaseWithNamespace(ctx, session, PhaseRunning, namespace)
-		return nil
-	}
-
-	credentialIDs, err := r.resolveCredentialIDs(ctx, sdk, session.ProjectID, session.AgentID)
-	if err != nil {
-		r.logger.Warn().Err(err).Str("session_id", session.ID).Msg("credential resolution failed; continuing without credentials")
-		credentialIDs = map[string]string{}
-	}
-
 	// Enable providers_v2 on the gateway before configuring providers or
 	// inference routing — required for v0.0.72+ gateways to correctly proxy
 	// inference traffic instead of attempting local execution.
@@ -329,16 +321,21 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		return fmt.Errorf("enabling providers_v2: %w", err)
 	}
 
-	providerNames, err := r.ensureGatewayProviders(ctx, namespace, project.Name, sdk, credentialIDs)
+	providerNames, inferenceProviders, err := r.resolveAgentProviders(ctx, sdk, namespace, project.Name, session, agent)
 	if err != nil {
-		return fmt.Errorf("ensuring gateway providers: %w", err)
+		return fmt.Errorf("resolving agent providers: %w", err)
 	}
 
-	if err := r.configureInference(ctx, namespace, project.Name, session.LlmModel, credentialIDs); err != nil {
-		r.logger.Warn().Err(err).
-			Str("namespace", namespace).
-			Str("session_id", session.ID).
-			Msg("inference configuration failed; sandbox will be created without inference routing")
+	if err := r.configureInferenceFromProviders(ctx, namespace, session.LlmModel, inferenceProviders); err != nil {
+		return fmt.Errorf("configuring inference: %w", err)
+	}
+
+	existing, err := r.gateway.GetSandbox(ctx, namespace, sbxName)
+	if err == nil && existing != nil && existing.Sandbox != nil {
+		r.logger.Debug().Str("sandbox", sbxName).Msg("sandbox already exists")
+		go r.execAfterReady(namespace, sbxName, session.ID, entrypoint, sdk)
+		r.updateSessionPhaseWithNamespace(ctx, session, PhaseCreating, namespace)
+		return nil
 	}
 
 	env := r.buildSandboxEnv(ctx, session, project.Name, sdk, providerNames)
@@ -352,6 +349,11 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 	}
 
 	sandboxImage := r.resolveSandboxImage(agent)
+
+	sandboxPolicy, policyErr := r.resolveAgentSandboxPolicy(ctx, sdk, session.ProjectID, agent)
+	if policyErr != nil {
+		return fmt.Errorf("resolving sandbox policy: %w", policyErr)
+	}
 
 	req := &openshellpb.CreateSandboxRequest{
 		Name: sbxName,
@@ -367,6 +369,7 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 			},
 			Environment: env,
 			Providers:   providerNames,
+			Policy:      sandboxPolicy,
 		},
 	}
 
@@ -381,9 +384,9 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		Int("providers", len(providerNames)).
 		Msg("sandbox created via gateway")
 
-	go r.execAfterReady(namespace, sbxName, session.ID, entrypoint)
+	go r.execAfterReady(namespace, sbxName, session.ID, entrypoint, sdk)
 
-	r.updateSessionPhaseWithNamespace(ctx, session, PhaseRunning, namespace)
+	r.updateSessionPhaseWithNamespace(ctx, session, PhaseCreating, namespace)
 	return nil
 }
 
@@ -425,9 +428,24 @@ func (r *SimpleKubeReconciler) mergeAgentEnvironment(env map[string]string, agen
 	}
 }
 
-func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID string, entrypoint []string) {
+func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID string, entrypoint []string, sdk *sdkclient.Client) {
 	pollCtx, pollCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer pollCancel()
+
+	failSession := func(reason string) {
+		// Use an independent context — pollCtx may already be cancelled (e.g. timeout).
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		now := time.Now()
+		condJSON, _ := json.Marshal([]map[string]string{{"type": "SandboxFailure", "reason": reason}})
+		if _, err := sdk.Sessions().UpdateStatus(ctx, sessionID, map[string]interface{}{
+			"phase":           PhaseFailed,
+			"completion_time": &now,
+			"conditions":      string(condJSON),
+		}); err != nil {
+			r.logger.Warn().Err(err).Str("session_id", sessionID).Msg("failed to mark session failed")
+		}
+	}
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -439,6 +457,7 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 				Str("sandbox", sbxName).
 				Str("session_id", sessionID).
 				Msg("timed out waiting for sandbox to become ready")
+			failSession("sandbox did not become ready within 120s")
 			return
 		case <-ticker.C:
 			resp, err := r.gateway.GetSandbox(pollCtx, namespace, sbxName)
@@ -455,6 +474,7 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 					Str("sandbox", sbxName).
 					Str("session_id", sessionID).
 					Msg("sandbox entered error phase")
+				failSession("sandbox entered error phase")
 				return
 			}
 			if phase != openshellpb.SandboxPhase_SANDBOX_PHASE_READY {
@@ -491,12 +511,16 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 			})
 			if err != nil {
 				r.logger.Error().Err(err).Str("sandbox", sbxName).Str("session_id", sessionID).Msg("failed to start runner exec")
+				failSession(fmt.Sprintf("failed to start runner exec: %v", err))
 				return
 			}
+			// FIXME(#223): Mark session PhaseCompleted and set completion_time here once
+			// session lifecycle is ironed out. Currently left Running so the sandbox
+			// isn't orphaned (Completed triggers deprovision).
 			r.logger.Info().
 				Str("sandbox", sbxName).
 				Str("session_id", sessionID).
-				Msg("runner exec stream started")
+				Msg("runner exec stream finished")
 			return
 		}
 	}
@@ -517,80 +541,13 @@ func (r *SimpleKubeReconciler) enableProvidersV2(ctx context.Context, namespace 
 	return nil
 }
 
-func (r *SimpleKubeReconciler) ensureGatewayProviders(ctx context.Context, namespace, projectName string, sdk *sdkclient.Client, credentialIDs map[string]string) ([]string, error) {
-	var providerNames []string
-
-	for ambientProvider, credID := range credentialIDs {
-		osType := openshell.OpenShellProviderType(ambientProvider)
-		provName := openshell.ProviderName(projectName, ambientProvider)
-
-		tokenResp, err := sdk.Credentials().GetToken(ctx, credID)
-		if err != nil {
-			return nil, fmt.Errorf("fetching credential token %s for provider %s: %w", credID, ambientProvider, err)
-		}
-
-		if tokenResp.Token == "" {
-			r.logger.Warn().
-				Str("provider", provName).
-				Str("credential_id", credID).
-				Msg("skipping provider with no credentials")
-			continue
-		}
-
-		providerData := &datapb.Provider{
-			Metadata: &datapb.ObjectMeta{
-				Name: provName,
-			},
-			Type:        osType,
-			Credentials: openshell.ProviderCredentials(ambientProvider, tokenResp.Token),
-			Config:      openshell.ProviderConfig(ambientProvider, r.cfg.VertexProjectID, r.cfg.VertexRegion),
-		}
-
-		_, err = r.gateway.GetProvider(ctx, namespace, provName)
-		if err == nil {
-			if _, err := r.gateway.UpdateProvider(ctx, namespace, &openshellpb.UpdateProviderRequest{Provider: providerData}); err != nil {
-				return nil, fmt.Errorf("updating provider %s: %w", provName, err)
-			}
-			r.logger.Info().
-				Str("provider", provName).
-				Str("type", osType).
-				Str("namespace", namespace).
-				Msg("gateway provider updated")
-		} else if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
-			if _, err := r.gateway.CreateProvider(ctx, namespace, &openshellpb.CreateProviderRequest{Provider: providerData}); err != nil {
-				return nil, fmt.Errorf("creating provider %s: %w", provName, err)
-			}
-			r.logger.Info().
-				Str("provider", provName).
-				Str("type", osType).
-				Str("namespace", namespace).
-				Msg("gateway provider created")
-		} else {
-			return nil, fmt.Errorf("checking provider %s: %w", provName, err)
-		}
-
-		if ambientProvider == "vertex" {
-			if err := r.ensureVertexCredentialRefresh(ctx, namespace, provName, tokenResp.Token); err != nil {
-				r.logger.Warn().Err(err).
-					Str("provider", provName).
-					Str("namespace", namespace).
-					Msg("vertex credential refresh setup failed; provider created without auto-refresh")
-			}
-		}
-
-		providerNames = append(providerNames, provName)
-	}
-
-	return providerNames, nil
-}
-
 func (r *SimpleKubeReconciler) ensureVertexCredentialRefresh(ctx context.Context, namespace, provName, credJSON string) error {
 	credType, err := openshell.DetectGoogleCredentialType(credJSON)
 	if err != nil {
 		return fmt.Errorf("detecting credential type: %w", err)
 	}
 
-	credKey := openshell.VertexAIRefreshCredentialKey
+	credKey := openshell.VertexRefreshCredentialKey(credType)
 	var refreshReq *openshellpb.ConfigureProviderRefreshRequest
 
 	switch credType {
@@ -663,37 +620,206 @@ func (r *SimpleKubeReconciler) ensureVertexCredentialRefresh(ctx context.Context
 	return nil
 }
 
-func (r *SimpleKubeReconciler) configureInference(ctx context.Context, namespace, projectName, sessionModel string, credentialIDs map[string]string) error {
+func (r *SimpleKubeReconciler) resolveAgentProviders(
+	ctx context.Context,
+	sdk *sdkclient.Client,
+	namespace, projectName string,
+	session types.Session,
+	agent *types.Agent,
+) (providerNames []string, inferenceProviders map[string]string, err error) {
+	if agent == nil || len(agent.Providers) == 0 {
+		r.logger.Info().
+			Str("session_id", session.ID).
+			Msg("agent has no provider declarations; sandbox will have no providers")
+		return nil, nil, nil
+	}
+
+	inferenceProviders = map[string]string{}
+
+	for _, declName := range agent.Providers {
+		if err := validateTSLValue(declName); err != nil {
+			r.logger.Warn().Err(err).Str("provider", declName).Msg("invalid provider name; skipping")
+			continue
+		}
+
+		provList, listErr := sdk.Providers().List(ctx, &types.ListOptions{
+			Search: fmt.Sprintf("name = '%s'", declName),
+			Size:   1,
+		})
+		if listErr != nil {
+			r.logger.Warn().Err(listErr).Str("provider", declName).Msg("failed to look up provider declaration; skipping")
+			continue
+		}
+		if len(provList.Items) == 0 {
+			r.logger.Warn().Str("provider", declName).Msg("provider declaration not found in API; skipping")
+			continue
+		}
+
+		provDecl := provList.Items[0]
+		if provDecl.Secret == "" {
+			r.logger.Warn().Str("provider", declName).Msg("provider declaration has no secret reference; skipping")
+			continue
+		}
+
+		provType := provDecl.Type
+		if provType == "" {
+			provType = declName
+		}
+
+		secretCreds, readErr := r.readProviderSecretCredentials(ctx, namespace, provDecl.Secret)
+		if readErr != nil {
+			return nil, nil, fmt.Errorf("reading secret %s for provider %s: %w", provDecl.Secret, declName, readErr)
+		}
+
+		osType := openshell.OpenShellProviderType(provType)
+		osName := openshell.ProviderName(projectName, declName)
+
+		credentials := openshell.ProviderCredentialsFromSecret(provType, secretCreds)
+
+		providerData := &datapb.Provider{
+			Metadata:    &datapb.ObjectMeta{Name: osName},
+			Type:        osType,
+			Credentials: credentials,
+			Config:      openshell.ProviderConfig(provType, r.cfg.VertexProjectID, r.cfg.VertexRegion),
+		}
+
+		_, updErr := r.gateway.UpdateProvider(ctx, namespace, &openshellpb.UpdateProviderRequest{Provider: providerData})
+		if updErr == nil {
+			r.logger.Info().Str("provider", osName).Str("type", osType).Msg("gateway provider updated from declaration")
+		} else if st, ok := status.FromError(updErr); ok && st.Code() == codes.NotFound {
+			if _, crErr := r.gateway.CreateProvider(ctx, namespace, &openshellpb.CreateProviderRequest{Provider: providerData}); crErr != nil {
+				return nil, nil, fmt.Errorf("creating provider %s: %w", osName, crErr)
+			}
+			r.logger.Info().Str("provider", osName).Str("type", osType).Msg("gateway provider created from declaration")
+		} else {
+			return nil, nil, fmt.Errorf("updating provider %s: %w", osName, updErr)
+		}
+
+		// Vertex uses short-lived access tokens; configure the gateway to auto-rotate
+		// them. SA keys use JWT → OAuth2 token exchange, ADC uses OAuth2 refresh tokens.
+		if provType == "vertex" {
+			credJSON := secretCreds["token"]
+			if credJSON == "" {
+				return nil, nil, fmt.Errorf("vertex provider %s: secret %s must have a 'token' key with the credential JSON", declName, provDecl.Secret)
+			}
+			if refreshErr := r.ensureVertexCredentialRefresh(ctx, namespace, osName, credJSON); refreshErr != nil {
+				return nil, nil, fmt.Errorf("configuring credential refresh for provider %s: %w", osName, refreshErr)
+			}
+		}
+
+		providerNames = append(providerNames, osName)
+		if openshell.IsInferenceCapable(provType) {
+			inferenceProviders[osName] = provType
+		}
+	}
+
+	r.logger.Info().
+		Int("count", len(providerNames)).
+		Strs("providers", providerNames).
+		Msg("resolved providers from agent declarations")
+
+	return providerNames, inferenceProviders, nil
+}
+
+func (r *SimpleKubeReconciler) readProviderSecretCredentials(ctx context.Context, namespace, secretName string) (map[string]string, error) {
+	secret, err := r.kube.GetSecret(ctx, namespace, secretName)
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %s/%s: %w", namespace, secretName, err)
+	}
+
+	dataField, found, err := unstructured.NestedMap(secret.Object, "data")
+	if err != nil {
+		return nil, fmt.Errorf("reading data from %s/%s: %w", namespace, secretName, err)
+	}
+	if !found || len(dataField) == 0 {
+		return nil, fmt.Errorf("secret %s/%s has no data", namespace, secretName)
+	}
+
+	creds := make(map[string]string, len(dataField))
+	for key, val := range dataField {
+		encodedStr, ok := val.(string)
+		if !ok {
+			continue
+		}
+		decoded, decErr := base64.StdEncoding.DecodeString(encodedStr)
+		if decErr != nil {
+			return nil, fmt.Errorf("base64-decoding key %q from %s/%s: %w", key, namespace, secretName, decErr)
+		}
+		creds[key] = string(decoded)
+	}
+
+	if len(creds) == 0 {
+		return nil, fmt.Errorf("secret %s/%s has no decodable keys", namespace, secretName)
+	}
+
+	return creds, nil
+}
+
+func (r *SimpleKubeReconciler) configureInferenceFromProviders(ctx context.Context, namespace, sessionModel string, inferenceProviders map[string]string) error {
 	inferenceModel := sessionModel
 	if inferenceModel == "" {
 		inferenceModel = "claude-sonnet-4-6"
 	}
 
-	for ambientProvider := range credentialIDs {
-		if !openshell.IsInferenceCapable(ambientProvider) {
+	for osName, provType := range inferenceProviders {
+		if !openshell.IsInferenceCapable(provType) {
 			continue
 		}
 
-		provName := openshell.ProviderName(projectName, ambientProvider)
-
 		resp, err := r.gateway.SetClusterInference(ctx, namespace, &inferencepb.SetClusterInferenceRequest{
-			ProviderName: provName,
+			ProviderName: osName,
 			ModelId:      inferenceModel,
 			NoVerify:     true,
 		})
 		if err != nil {
-			return fmt.Errorf("setting inference for provider %s: %w", provName, err)
+			return fmt.Errorf("setting inference for provider %s: %w", osName, err)
 		}
 
 		r.logger.Info().
 			Str("namespace", namespace).
-			Str("provider", provName).
+			Str("provider", osName).
 			Str("model", inferenceModel).
 			Uint64("version", resp.Version).
 			Msg("inference routing configured")
 	}
 
 	return nil
+}
+
+func (r *SimpleKubeReconciler) resolveAgentSandboxPolicy(ctx context.Context, sdk *sdkclient.Client, projectID string, agent *types.Agent) (*sandboxpb.SandboxPolicy, error) {
+	if agent == nil || agent.SandboxPolicy == "" {
+		return nil, nil
+	}
+
+	policyName := agent.SandboxPolicy
+	if err := validateTSLValue(policyName); err != nil {
+		return nil, fmt.Errorf("invalid policy name %q: %w", policyName, err)
+	}
+
+	policyList, err := sdk.Policys().List(ctx, &types.ListOptions{
+		Search: fmt.Sprintf("name = '%s'", policyName),
+		Size:   1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("looking up policy %s: %w", policyName, err)
+	}
+	if len(policyList.Items) == 0 {
+		return nil, fmt.Errorf("policy %s not found", policyName)
+	}
+
+	policySpec := policyList.Items[0].Spec
+	if policySpec == "" {
+		r.logger.Warn().Str("policy", policyName).Msg("policy has empty spec")
+		return nil, nil
+	}
+
+	var sbxPolicy sandboxpb.SandboxPolicy
+	if err := json.Unmarshal([]byte(policySpec), &sbxPolicy); err != nil {
+		return nil, fmt.Errorf("deserializing policy %s spec: %w", policyName, err)
+	}
+
+	r.logger.Info().Str("policy", policyName).Msg("resolved sandbox policy from agent config")
+	return &sbxPolicy, nil
 }
 
 func (r *SimpleKubeReconciler) buildSandboxEnv(ctx context.Context, session types.Session, projectName string, sdk *sdkclient.Client, providerNames []string) map[string]string {
@@ -786,7 +912,7 @@ func (r *SimpleKubeReconciler) buildSandboxEnv(ctx context.Context, session type
 
 	injected := map[string]bool{}
 	for _, pn := range providerNames {
-		for ambientProvider := range providerTypeMapping() {
+		for _, ambientProvider := range openshell.KnownAmbientProviderTypes() {
 			if pn == openshell.ProviderName(env["PROJECT_NAME"], ambientProvider) {
 				osType := openshell.OpenShellProviderType(ambientProvider)
 				for _, envName := range openshell.ProviderInjectedEnvVars(osType) {
@@ -804,13 +930,6 @@ func (r *SimpleKubeReconciler) buildSandboxEnv(ctx context.Context, session type
 	}
 
 	return env
-}
-
-func providerTypeMapping() map[string]bool {
-	return map[string]bool{
-		"github": true, "anthropic": true, "claude": true,
-		"jira": true, "google": true, "vertex": true, "kubeconfig": true,
-	}
 }
 
 func (r *SimpleKubeReconciler) deprovisionSession(ctx context.Context, session types.Session, nextPhase string) error {
