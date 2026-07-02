@@ -505,6 +505,23 @@ func (r *SimpleKubeReconciler) execAfterReady(namespace, sbxName, sessionID stri
 			// DNS resolver to mishandle the many concurrent responses and return
 			// zero usable addresses (manifests as 503 "inference service unavailable").
 			// Setting ndots:1 makes musl resolve FQDNs directly.
+			//
+			// sed -i and shell redirects fail on bind-mounted /etc/resolv.conf
+			// in OpenShell sandboxes (read-only mount or "Device or resource busy").
+			// Piping through tee overwrites the file via its open fd instead.
+			ndotsResult, ndotsErr := r.gateway.ExecSandbox(execCtx, namespace, &openshellpb.ExecSandboxRequest{
+				SandboxId:      sandboxID,
+				Command:        []string{"/bin/sh", "-c", "cp /etc/resolv.conf /tmp/resolv.conf && sed 's/ndots:[0-9]*/ndots:1/' /tmp/resolv.conf | tee /etc/resolv.conf > /dev/null"},
+				TimeoutSeconds: 10,
+			})
+			if ndotsErr != nil {
+				r.logger.Warn().Err(ndotsErr).Str("sandbox", sbxName).Msg("failed to patch ndots; inference routing may fail for external FQDNs")
+			} else if ndotsResult.ExitCode != 0 {
+				r.logger.Warn().Int32("exit_code", ndotsResult.ExitCode).Str("stderr", string(ndotsResult.Stderr)).Str("sandbox", sbxName).Msg("ndots patch exited non-zero")
+			} else {
+				r.logger.Info().Str("sandbox", sbxName).Msg("ndots patched to 1 for musl DNS compatibility")
+			}
+
 			err = r.gateway.ExecSandboxStreaming(execCtx, namespace, &openshellpb.ExecSandboxRequest{
 				SandboxId: sandboxID,
 				Command:   entrypoint,
@@ -588,8 +605,9 @@ func (r *SimpleKubeReconciler) ensureVertexCredentialRefresh(ctx context.Context
 				"client_secret": material.ClientSecret,
 				"refresh_token": material.RefreshToken,
 				"client_email":  clientEmail,
+				"private_key":   "not-used-for-oauth2",
 			},
-			SecretMaterialKeys: []string{"client_secret", "refresh_token"},
+			SecretMaterialKeys: []string{"client_secret", "refresh_token", "private_key"},
 		}
 		r.logger.Info().
 			Str("provider", provName).
@@ -865,6 +883,7 @@ func (r *SimpleKubeReconciler) buildSandboxEnv(ctx context.Context, session type
 		// them — not just processes launched through a specific wrapper.
 		env["ANTHROPIC_BASE_URL"] = "https://inference.local"
 		env["ANTHROPIC_API_KEY"] = "notused"
+		env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1"
 	} else if r.cfg.VertexEnabled {
 		env["USE_VERTEX"] = "1"
 		env["CLAUDE_CODE_USE_VERTEX"] = "1"
