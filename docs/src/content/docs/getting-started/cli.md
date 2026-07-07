@@ -165,7 +165,7 @@ acpctl get credentials -o json
 acpctl describe session <session-id>
 acpctl delete session <session-id>
 acpctl apply -f resources.yaml
-acpctl ambient
+acpctl tui
 acpctl completion bash
 ```
 

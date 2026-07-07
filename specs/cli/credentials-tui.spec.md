@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `acpctl ambient` interactive TUI SHALL provide credential management with full feature parity to the ambient-ui's Credentials view. This covers a credential registry table (`:credentials`), full CRUD lifecycle, token rotation, and a credential-bindings view (`:credentialbindings`) for managing per-project and per-agent access grants.
+The `acpctl tui` interactive TUI SHALL provide credential management with full feature parity to the ambient-ui's Credentials view. This covers a credential registry table (`:credentials`), full CRUD lifecycle, token rotation, and a credential-bindings view (`:credentialbindings`) for managing per-project and per-agent access grants.
 
 Binding semantics follow `credential-binding-enforcement.spec.md`. This spec covers project-level and agent-level bindings only. Global bindings (`project_id=NULL`, `agent_id=NULL`) require `platform:admin` and are not exposed in the TUI — they are an admin operation performed via the API or `acpctl` CLI directly.
 

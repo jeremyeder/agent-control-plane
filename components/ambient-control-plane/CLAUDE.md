@@ -24,7 +24,7 @@ WatchSessionMessages RPC (streaming)
   ├── acpctl session messages -f
   ├── Go SDK session_watch.go
   ├── Python SDK _grpc_client.py
-  └── TUI dashboard (acpctl ambient)
+  └── TUI dashboard (acpctl tui)
 ```
 
 ## Proto Definitions

@@ -1,4 +1,3 @@
-// Package ambient implements the ambient TUI dashboard subcommand.
 package ambient
 
 import (
@@ -13,7 +12,7 @@ import (
 )
 
 var Cmd = &cobra.Command{
-	Use:   "ambient",
+	Use:   "tui",
 	Short: "Interactive TUI — k9s-style resource browser for the Ambient platform",
 	Long: `Launches an interactive terminal UI for the Ambient platform.
 

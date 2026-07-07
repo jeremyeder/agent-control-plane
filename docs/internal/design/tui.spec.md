@@ -683,7 +683,7 @@ These are gaps where the TUI spec requires data the API does not provide efficie
 
 ## Implementation Priority
 
-Each wave produces a **shippable `acpctl ambient`** — the binary is usable at the end of every wave, not just scaffolding.
+Each wave produces a **shippable `acpctl tui`** — the binary is usable at the end of every wave, not just scaffolding.
 
 | Wave | Scope | Deliverable |
 |------|-------|-------------|
@@ -712,4 +712,4 @@ Each wave produces a **shippable `acpctl ambient`** — the binary is usable at 
 
 | Command | Description | Status |
 |---------|-------------|--------|
-| `acpctl ambient` | Launch interactive TUI | ✅ |
+| `acpctl tui` | Launch interactive TUI | ✅ |
