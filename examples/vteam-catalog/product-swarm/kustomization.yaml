@@ -1,0 +1,5 @@
+kind: Kustomization
+resources:
+  - project.yaml
+  - providers.yaml
+  - agents

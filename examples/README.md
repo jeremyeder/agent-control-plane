@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains example Agent definitions and tenant overlays for the Ambient Code Platform.
+This directory contains example Agent definitions and tenant overlays for ACP.
 
 ## Structure
 
@@ -14,12 +14,18 @@ examples/
 │       ├── jira-simple-whoami-with-skill-payload.yaml
 │       ├── pr-reviewer.yaml
 │       └── jira-issue-categorizer.yaml
-└── overlays/
-    ├── tenant-a/        # Development tenant
-    └── tenant-b/        # Staging tenant
+├── overlays/
+│   ├── tenant-a/        # Development tenant
+│   └── tenant-b/        # Staging tenant
+└── vteam-catalog/
+    └── product-swarm/   # ACP catalog product swarm
 ```
 
-`base/` contains the agent definitions shared across all tenants. `overlays/` contains the tenant-specific Projects, Providers, and Credentials that bind agents to a cluster namespace.
+`base/` contains the agent definitions shared across all tenants. `overlays/`
+contains the tenant-specific Projects, Providers, and Credentials that bind
+agents to a cluster namespace.
+
+`vteam-catalog/` contains ACP-native multi-agent catalog examples.
 
 ## Applying Examples
 
@@ -29,6 +35,9 @@ acpctl apply -k examples/overlays/tenant-a/
 
 # Apply to staging tenant
 acpctl apply -k examples/overlays/tenant-b/
+
+# Apply an ACP catalog product swarm
+acpctl apply -k examples/vteam-catalog/product-swarm --project vteam-product-swarm
 ```
 
 ## Prerequisites
@@ -124,13 +133,15 @@ def login(username, password):
 
 ### `jira-simple-whoami`
 
-Demonstrates Jira MCP integration. Connects to Jira and looks up the authenticated user's profile.
+Demonstrates Jira Model Context Protocol integration. Connects to Jira and
+looks up the authenticated user's profile.
 
 **Providers:** `vertex`, `jira`
 
 **Prerequisites:** `jira` secret in the tenant namespace (see above).
 
-**What it does:** Uses the Jira MCP tools to call the Jira API and return the current user's username and profile information.
+**What it does:** Uses the Jira Model Context Protocol tools to call the Jira
+API. Returns the current user's username and profile information.
 
 **Session prompt example:**
 ```
@@ -158,7 +169,9 @@ Who am I in Jira?
 
 ### `pr-reviewer`
 
-A GitHub Pull Request reviewer. Fetches PR metadata, diffs, and comments via the GitHub MCP and produces a structured review report.
+A GitHub Pull Request reviewer. Fetches PR metadata, diffs, and comments via
+the GitHub Model Context Protocol integration. Produces a structured review
+report.
 
 **Providers:** `vertex`, `github`
 
