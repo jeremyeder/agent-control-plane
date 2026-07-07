@@ -18,8 +18,20 @@ acp-mvp-lab
 
 ## 1. Create The Local Kind Cluster
 
+This lab runs on Docker. If Podman is also installed, `make` selects Podman by
+default, so later commands such as `make kind-status` and
+`make test-vteam-catalog-lab` look for the cluster under the wrong engine and
+report `No ambient Kind cluster found` even though it is running. Export the
+engine once so every command in this lab targets Docker:
+
 ```bash
-make kind-up CONTAINER_ENGINE=docker OPENSHELL_USE_GATEWAY=true
+export CONTAINER_ENGINE=docker
+```
+
+Then create the cluster:
+
+```bash
+make kind-up OPENSHELL_USE_GATEWAY=true
 ```
 
 After it finishes, check the assigned ports:
@@ -166,6 +178,22 @@ current backend port from `make kind-status`.
 
 ## 7. Optional: Start A Work Packet Session
 
+In gateway mode (this lab uses `OPENSHELL_USE_GATEWAY=true`), starting a session
+also requires the OpenShell gateway TLS secret `openshell-client-tls` in the
+project namespace. `make kind-up` provisions it for the seed namespaces
+(`tenant-a`, `tenant-b`) but not for namespaces created later by `acpctl apply`,
+such as `vteam-product-swarm`. When it is missing the session goes to `Pending`
+and then `Failed` with no reason surfaced by `acpctl`; the cause appears only in
+the control plane logs:
+
+```bash
+kubectl logs -n ambient-code -l app=ambient-control-plane --tail=50 \
+  | grep openshell-client-tls
+```
+
+Provisioning gateway TLS for a catalog-created namespace is not yet covered by
+this lab.
+
 After provider secrets are available, start Stella with the demo work packet:
 
 ```bash
@@ -179,3 +207,18 @@ Then inspect sessions:
 ```bash
 "$ACPCTL" agent sessions stella --project-id vteam-product-swarm
 ```
+
+## 8. Optional: Automated Lab Check
+
+With the cluster running and `CONTAINER_ENGINE` exported (step 1), you can
+validate the whole copy/paste flow end to end:
+
+```bash
+make test-vteam-catalog-lab
+```
+
+It re-runs the port-forward, login, apply, and verification blocks from this
+document and confirms that the project, all six agents (`stella`, `steve`,
+`terry`, `amber`, `parker`, `ryan`), and all three providers (`vertex`,
+`github`, `jira`) exist. The optional Stella session (step 7) is skipped unless
+you set `RUN_OPTIONAL_SESSION=true`.
