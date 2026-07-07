@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2563eb" />
+  <title>ACP Sessions</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="light">
+  <header class="titlebar">
+    <div class="cluster"><span id="statusDot" class="dot gray"></span><button id="clusterButton" class="linklike">not configured</button></div>
+    <div class="versions">
+      <button id="notifyButton" class="iconbtn" title="Enable notifications">Alerts<span id="unreadBadge" class="unread hidden">0</span></button>
+      <button id="themeButton" class="iconbtn" title="Toggle theme">Theme</button>
+      <a href="https://github.com/openshift-online/agent-control-plane" target="_blank" rel="noreferrer">Ext v0.1.0</a>
+    </div>
+  </header>
+
+  <main id="app">
+    <section id="setupView" class="view hidden">
+      <h1>Connect to ACP</h1>
+      <p class="muted">Browser extension MVP. Uses a bearer token until ACP has browser OAuth client support.</p>
+      <label>ACP server URL<input id="baseUrl" placeholder="https://acp.example.com" autocapitalize="off" autocomplete="url" /></label>
+      <label>Project / workspace<input id="projectName" placeholder="default" autocapitalize="off" /></label>
+      <label>Bearer token<textarea id="token" rows="5" placeholder="Paste access token" autocapitalize="off" spellcheck="false"></textarea></label>
+      <button id="saveConfig" class="primary">Save and load sessions</button>
+    </section>
+
+    <section id="sessionsView" class="view hidden">
+      <div class="toolbar">
+        <div><strong>Sessions</strong><div id="activeProject" class="muted small"></div></div>
+        <div class="toolbarActions"><button id="refreshButton" title="Refresh">Refresh</button><button id="createButton" title="Create session">New</button><button id="settingsButton" title="Settings">Settings</button></div>
+      </div>
+      <div id="toasts" class="toasts"></div>
+      <div id="notificationPanel" class="notificationPanel hidden"></div>
+      <div id="sessionList" class="list"></div>
+    </section>
+
+    <section id="createView" class="view hidden overlay">
+      <div class="overlayHeader"><button class="backButton" aria-label="Back" title="Back">‹</button><h2>Create Session</h2></div>
+      <label>Name<input id="newName" placeholder="Fix issue 123" /></label>
+      <label>Repository URL<input id="newRepo" list="repoHistory" placeholder="https://github.com/org/repo" autocapitalize="off" autocomplete="url" /></label>
+      <datalist id="repoHistory"></datalist>
+      <label>Model<select id="newModel"><option>claude-sonnet-4-6</option><option>gpt-5.5-thinking</option><option>local-default</option></select></label>
+      <label>Initial prompt<textarea id="newPrompt" rows="8"></textarea></label>
+      <label class="check"><input id="autoStart" type="checkbox" /> Start after creating</label>
+      <button id="submitCreate" class="primary">Create</button>
+    </section>
+
+    <section id="chatView" class="view hidden overlay chatView">
+      <div class="overlayHeader"><button class="backButton" aria-label="Back" title="Back">‹</button><h2 id="chatTitle">Chat</h2></div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm" class="chatForm"><textarea id="chatInput" rows="2" placeholder="Message this session"></textarea><button class="primary">Send</button></form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

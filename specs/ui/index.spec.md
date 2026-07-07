@@ -20,3 +20,6 @@ Structured metadata on sessions, agents, and projects. Covers annotation schemas
 
 Visual feedback for running sessions including live preview, screenshot capture, real-time update streaming, and WebSocket integration.
 
+### [Browser Extension](browser-extension.spec.md)
+
+Chrome side panel for configuring ACP access, managing project sessions, and continuing session chat from the browser.

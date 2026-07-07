@@ -49,9 +49,9 @@ skills/
 
 ## Reconciliation State
 
-**Last analyzed**: 2026-07-05 (Wave 2 + Wave 4 + Wave 5 + Wave 6 + Wave 7 executed)
-**Spec corpus**: 29 specs across 4 domains
-**Codebase commit**: feat/reconcile-skill-and-spec-alignment branch
+**Last analyzed**: 2026-07-07 (browser-extension spec registered; full dry-run pending)
+**Spec corpus**: 30 specs across 4 domains
+**Codebase commit**: browser-extension branch
 
 ### Coverage Summary
 
@@ -59,9 +59,9 @@ skills/
 |--------|-------|-------------|---------|---------|---------|----------|
 | Platform | 12 | 110 | 105 | 2 | 3 | 95.5% |
 | Security | 6 | 55 | 45 | 5 | 5 | 81.8% |
-| UI | 7 | 70 | 60 | 8 | 2 | 85.7% |
+| UI | 8 | 79 | 60 | 8 | 11 | 75.9% |
 | CLI | 1 | 13 | 13 | 0 | 0 | 100% |
-| **TOTAL** | **29** | **248** | **223** | **15** | **10** | **89.9%** |
+| **TOTAL** | **30** | **257** | **223** | **15** | **19** | **86.8%** |
 
 ### Spec Dependency Order
 
@@ -74,8 +74,9 @@ Layer 2:          runner, agent-sandbox-config, credential-binding, gateway-rbac
 Layer 3:          gateway-provisioning, credential-encryption, openshell-sandbox
 Layer 4:          openshell-sandbox-provisioning, agent-inheritance
 Layer 5:          scheduled-session-execution, session-activity-tracking, mcp-server
-Layer 6 (leaves): architecture, annotations, views, live-preview, project-sharing,
-                  scheduled-sessions, work-tracking-dashboard, credentials-tui
+Layer 6 (leaves): architecture, annotations, views, live-preview, browser-extension,
+                  project-sharing, scheduled-sessions, work-tracking-dashboard,
+                  credentials-tui
 ```
 
 ---
@@ -133,6 +134,15 @@ Severity: `blocker` > `critical` > `major` > `minor`
 | U6 | live-preview | SSE fallback indicator | FE | missing | minor | Blocked: no SSE client exists. Uses polling only. |
 | U7 | architecture | Sidebar "Configure" group label | FE | partial | minor | Uses "Admin" label. Settings in separate "Project" group instead of "Configure". |
 | U8 | project-sharing | Settings access via gear icon | FE | partial | minor | Settings is sidebar nav item, not gear icon in nav header per spec. |
+| U9 | browser-extension | Chrome side panel surface | FE | missing | major | No canonical browser-extension component is registered in build/test surfaces. Prototype exists only as behavior evidence. |
+| U10 | browser-extension | Connection configuration | FE | missing | major | Needs configured server URL, project/workspace, bearer-token storage, and auth failure handling. |
+| U11 | browser-extension | Session list | FE | missing | major | Needs compact session list, phase badges, polling, and empty state. |
+| U12 | browser-extension | Session lifecycle actions | FE | missing | major | Needs create/start/stop/delete/chat with phase-aware action gating and refetch-before-start. |
+| U13 | browser-extension | Chat transcript | FE | missing | major | Needs user/assistant transcript, hidden lifecycle/system rows, localized timestamps, Enter-to-send, and message polling. |
+| U14 | browser-extension | Notifications | FE | missing | minor | Needs distinct alert panel, mark-all-read persistence, badge clearing, and non-overlapping toasts. |
+| U15 | browser-extension | Authentication and storage | FE | missing | major | Needs local storage without token leaks in logs/errors/rendered output. |
+| U16 | browser-extension | API contract | FE | missing | major | Must use existing ACP REST APIs; no browser-extension backend endpoints. |
+| U17 | browser-extension | Visual QA and packaging | FE/Test | missing | major | Needs repeatable unpacked-extension browser QA and packaged artifact validation. |
 
 ### Divergences (Require Human Decision)
 
@@ -155,7 +165,7 @@ Gaps grouped by execution wave. Each wave gates the next.
 | 2 | API | 3 | P5, P6, U2 (endpoint) | `make lint` on API server |
 | 4 | BE + CP | 10 | S1, S2, S3, S4, S5, S7, S8, P1, P10, S6 | `go vet ./... && golangci-lint run` |
 | 5 | CLI + Runner | 3 | P2, P4, P8 | CLI tests, `python -m pytest tests/` |
-| 6 | FE | 7 | P3, U1, U2 (UI), U3, U4, U5, U6 | `npm run build` -- 0 errors |
+| 6 | FE | 16 | P3, U1, U2 (UI), U3, U4, U5, U6, U9, U10, U11, U12, U13, U14, U15, U16, U17 | `npm run build` + browser-extension QA |
 | 7 | Integration | 2 | P7, P9 | MCP tool test in Kind |
 
 **Partials** (U7, U8, S9, S10, S11) are low-severity and can be addressed opportunistically.
@@ -202,3 +212,4 @@ Gaps grouped by execution wave. Each wave gates the next.
 | 2026-07-05 | (pending) | Wave 6 executed: P3,U1,U2(UI),U3 | 89.9% | 4 gaps closed. Application CRUD UI, folder tree, transfer ownership UI, sole-owner tooltip. U4/U5/U6 blocked on backend. |
 | 2026-07-05 | (pending) | Wave 7 executed: P7 | 90.3% | SSE stream forwarding implemented in MCP watch tool. P9 blocked on api-server plugin. |
 | 2026-07-05 | (pending) | E2E validation: Kind deploy + LLM round-trip | 90.3% | All 3 components rebuilt and deployed to Kind. LLM round-trip confirmed: Hello world + 2+2=4. |
+| 2026-07-07 | (pending) | Browser extension spec added; manual gap registration identified U9-U17 | 86.8% | New UI spec defines Chrome side panel extension desired state. Prototype treated as behavior evidence, not canonical implementation. Full `/reconcile --dry-run` still pending. |

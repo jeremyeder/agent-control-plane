@@ -49,6 +49,7 @@ Machine-readable index for autonomous reconciliation (`/reconcile` skill).
 | `ui/views.spec.md` | ui | Session, Agent, Credential, Schedule views | FE | data-model, architecture |
 | `ui/annotations.spec.md` | ui | Annotation keys (20+) | FE | data-model |
 | `ui/live-preview.spec.md` | ui | Live preview, SSE updates | FE | architecture |
+| `ui/browser-extension.spec.md` | ui | BrowserExtension, Session, SessionMessage | FE | data-model, views, live-preview |
 | `ui/project-sharing.spec.md` | ui | Project sharing, ownership transfer | FE, BE | rbac-enforcement |
 | `ui/scheduled-sessions.spec.md` | ui | Schedule CRUD UI | FE | scheduled-session-execution |
 | `ui/work-tracking-dashboard.spec.md` | ui | Dashboard, work annotations | FE | annotations, views |

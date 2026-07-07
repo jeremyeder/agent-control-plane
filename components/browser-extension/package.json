@@ -1,0 +1,13 @@
+{
+  "name": "acp-session-manager-browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check app.js && node --check background.js && python3 -m json.tool manifest.json >/tmp/acp-browser-extension-manifest.json",
+    "qa:browser": "node scripts/browser-qa.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}
