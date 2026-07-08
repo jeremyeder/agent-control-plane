@@ -2,4 +2,5 @@ kind: Kustomization
 resources:
   - project.yaml
   - providers.yaml
+  - gateway.yaml
   - agents
