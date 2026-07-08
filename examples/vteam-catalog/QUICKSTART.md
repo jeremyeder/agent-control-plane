@@ -73,6 +73,7 @@ In the first terminal, log in with the Makefile helper:
 
 ```bash
 make kind-acpctl-login
+export AMBIENT_PROJECT=vteam-product-swarm
 ```
 
 If you need to do the same steps manually, derive the backend port from
@@ -99,6 +100,7 @@ TOKEN=$(kubectl get secret test-user-token -n ambient-code \
 Quick check:
 
 ```bash
+export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" get projects
 ```
 
@@ -123,6 +125,7 @@ the project exists.
 ## 5. Apply The Current vTeam Catalog Manifests
 
 ```bash
+export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" apply \
   -k examples/vteam-catalog/product-swarm \
   --project vteam-product-swarm
@@ -131,6 +134,7 @@ the project exists.
 Verify ACP records:
 
 ```bash
+export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" get project vteam-product-swarm
 "$ACPCTL" agent list --project-id vteam-product-swarm
 "$ACPCTL" provider list --project-id vteam-product-swarm
@@ -166,9 +170,16 @@ current backend port from `make kind-status`.
 
 ## 7. Optional: Start A Work Packet Session
 
-After provider secrets are available, start Stella with the demo work packet:
+Starting real sessions needs provider secrets and an OpenShell gateway for the
+`vteam-product-swarm` namespace. The default Kind gateway setup provisions
+`tenant-a` and `tenant-b`; add `vteam-product-swarm` to `OPENSHELL_TENANTS`
+before cluster creation if you want to run this optional step.
+
+After those runtime prerequisites are available, start Stella with the demo work
+packet:
 
 ```bash
+export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" agent start stella \
   --project-id vteam-product-swarm \
   --prompt "Add dark mode to the calculator"
@@ -177,5 +188,6 @@ After provider secrets are available, start Stella with the demo work packet:
 Then inspect sessions:
 
 ```bash
+export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" agent sessions stella --project-id vteam-product-swarm
 ```

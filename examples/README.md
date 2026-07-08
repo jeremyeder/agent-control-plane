@@ -1,50 +1,96 @@
 # Examples
 
-This directory contains example Agent definitions and tenant overlays for ACP.
+This directory contains example Agent, Provider, Gateway, and Credential definitions for the Agent Control Plane.
 
 ## Structure
 
 ```
 examples/
 ├── base/
-│   └── agents/          # Agent definitions (provider-agnostic)
-│       ├── hello-world.yaml
-│       ├── security-reviewer.yaml
-│       ├── jira-simple-whoami.yaml
-│       ├── jira-simple-whoami-with-skill-payload.yaml
-│       ├── pr-reviewer.yaml
-│       └── jira-issue-categorizer.yaml
+│   ├── agents/              # Agent definitions (provider-agnostic)
+│   │   ├── hello-world.yaml
+│   │   ├── security-reviewer.yaml
+│   │   ├── jira-simple-whoami.yaml
+│   │   ├── jira-simple-whoami-with-skill-payload.yaml
+│   │   ├── pr-reviewer.yaml
+│   │   └── jira-issue-categorizer.yaml
+│   ├── gateways/            # Base gateway template
+│   │   └── openshell-gateway.yaml
+│   └── providers/           # Boilerplate provider integrations (shared by all tenants)
+│       ├── vertex.yaml
+│       ├── github.yaml
+│       └── jira.yaml
 ├── overlays/
-│   ├── tenant-a/        # Development tenant
-│   └── tenant-b/        # Staging tenant
-└── vteam-catalog/
-    └── product-swarm/   # ACP catalog product swarm
+│   ├── tenant-a/            # Development tenant
+│   │   ├── project.yaml
+│   │   ├── gateway.yaml
+│   │   ├── credential-vertex.yaml
+│   │   ├── credential-jira.yaml
+│   │   └── credential-github.yaml
+│   └── tenant-b/            # Staging tenant
+│       ├── project.yaml
+│       ├── gateway.yaml
+│       ├── credential-vertex.yaml
+│       └── credential-github.yaml
 ```
 
-`base/` contains the agent definitions shared across all tenants. `overlays/`
-contains the tenant-specific Projects, Providers, and Credentials that bind
-agents to a cluster namespace.
-
-`vteam-catalog/` contains ACP-native multi-agent catalog examples.
+`base/` contains resources shared across all tenants: agent definitions and boilerplate provider integrations (vertex, github, jira). `overlays/` contains the tenant-specific Project, Gateway, and Credentials.
 
 ## Applying Examples
 
 ```bash
 # Apply to development tenant
-acpctl apply -k examples/overlays/tenant-a/
+acpctl apply -k examples/overlays/tenant-a/ --project tenant-a
 
 # Apply to staging tenant
-acpctl apply -k examples/overlays/tenant-b/
+acpctl apply -k examples/overlays/tenant-b/ --project tenant-b
+```
 
-# Apply an ACP catalog product swarm
+The `--project` flag (or `acpctl project <name>` beforehand) tells the CLI which project to scope Agents, Providers, and Gateways to.
+
+## vTeam Catalog Examples
+
+`vteam-catalog/` contains ACP-native multi-agent catalog examples:
+
+```text
+vteam-catalog/
+├── product-swarm/           # ACP catalog product swarm
+└── codebase-maintainers/    # Internal maintenance catalog
+```
+
+Apply the product swarm:
+
+```bash
 acpctl apply -k examples/vteam-catalog/product-swarm --project vteam-product-swarm
 ```
 
+Apply the codebase-maintainers catalog:
+
+```bash
+acpctl apply -k examples/vteam-catalog/codebase-maintainers --project codebase-maintainers
+```
+
+## What Gets Applied
+
+Each overlay applies the full declarative stack via a single `acpctl apply -k`:
+
+| Kind | Source | Purpose |
+|------|--------|---------|
+| **Project** | `overlays/*/project.yaml` | Creates the tenant project with description, prompt, and labels |
+| **Agent** | `base/agents/*.yaml` | Shared agent definitions (hello-world, pr-reviewer, etc.) |
+| **Provider** | `base/providers/*.yaml` | Boilerplate integrations (vertex, github, jira) — shared by all tenants |
+| **Gateway** | `overlays/*/gateway.yaml` | Project-scoped OpenShell gateway with tenant DNS names |
+| **Credential** | `overlays/*/credential-*.yaml` | Tenant-specific credentials with env-var token references |
+
 ## Prerequisites
 
-Each provider requires a Kubernetes Secret to exist in the tenant namespace **before** running `acpctl apply`. These secrets are not managed by `acpctl` — you must create them manually with `kubectl`.
+### Provider Secrets
 
-### Vertex AI (required by all agents)
+Each provider requires a Kubernetes Secret in the tenant namespace **before**
+running `acpctl apply`. These secrets are consumed by the provider integration
+at session start.
+
+#### Vertex AI (required by all agents)
 
 All agents use Vertex AI for inference. Create the secret with your Google Cloud credentials:
 
@@ -66,7 +112,7 @@ The secret key must be `token`. The value must be the raw JSON content of a Goog
 
 > Repeat for `tenant-b` by replacing `-n tenant-a` with `-n tenant-b`.
 
-### GitHub (required by `pr-reviewer`)
+#### GitHub (required by `pr-reviewer`)
 
 Create the secret with a GitHub Personal Access Token (classic or fine-grained):
 
@@ -80,7 +126,7 @@ The token needs at minimum: `repo` (read), `pull_requests` (read).
 
 > Repeat for `tenant-b` by replacing `-n tenant-a` with `-n tenant-b`.
 
-### Jira (required by `jira-simple-whoami`, `jira-simple-whoami-with-skill-payload`, and `jira-issue-categorizer`)
+#### Jira (required by `jira-simple-whoami`, `jira-simple-whoami-with-skill-payload`, and `jira-issue-categorizer`)
 
 ```bash
 kubectl create secret generic jira \
@@ -92,6 +138,19 @@ kubectl create secret generic jira \
 Store your API token in `~/jira-token.txt` before running the command. Generate one at: https://id.atlassian.com/manage-profile/security/api-tokens
 
 > Repeat for `tenant-b` by replacing `-n tenant-a` with `-n tenant-b`.
+
+### Credential Environment Variables
+
+Credential YAML files reference tokens via environment variables (expanded by `acpctl apply` at apply time):
+
+| Variable | Used by | Value |
+|----------|---------|-------|
+| `$VERTEX_SA_KEY` | `credential-vertex.yaml` | Vertex AI service account JSON |
+| `$GITHUB_PAT` | `credential-github.yaml` | GitHub Personal Access Token |
+| `$JIRA_API_TOKEN` | `credential-jira.yaml` | Jira API token |
+| `$JIRA_EMAIL` | `credential-jira.yaml` | Jira account email |
+
+Export these before running `acpctl apply`.
 
 ---
 
@@ -228,6 +287,19 @@ Categorize issues in project HPSTRAT using hierarchical mode. Apply changes.
 
 ---
 
+## Gateway
+
+Each overlay declares a project-scoped OpenShell gateway in `gateway.yaml`. The gateway is reconciled by the GatewayReconciler into Kubernetes resources (StatefulSet, Service, RBAC, certgen Job).
+
+Key fields:
+- `image` — gateway container image (defaults to `OPENSHELL_GATEWAY_IMAGE` if omitted)
+- `server_dns_names` — DNS names for TLS certificate generation, scoped to the tenant namespace
+- `config` — optional TOML configuration for the gateway
+
+The base `gateways/openshell-gateway.yaml` serves as a reference template. Each overlay declares its own gateway with the correct namespace in `server_dns_names`.
+
+---
+
 ## Tenants
 
 ### `tenant-a` — Development
@@ -235,9 +307,13 @@ Categorize issues in project HPSTRAT using hierarchical mode. Apply changes.
 Permissive sandbox mode for rapid iteration. Use this tenant for testing new prompts, provider integrations, and agent configurations.
 
 **Providers configured:** `vertex`, `jira`, `github`
+**Credentials:** Vertex AI, Jira, GitHub
+**Gateway:** OpenShell gateway at `openshell-gateway.tenant-a.svc.cluster.local`
 
 ### `tenant-b` — Staging
 
 Restricted sandbox policies matching production. Use this tenant to validate agent behavior and provider configs before promoting to production.
 
-**Providers configured:** `vertex`, `github`
+**Providers configured:** `vertex`, `github`, `jira` (from base)
+**Credentials:** Vertex AI, GitHub (no Jira credential — agents requiring Jira will not run)
+**Gateway:** OpenShell gateway at `openshell-gateway.tenant-b.svc.cluster.local`

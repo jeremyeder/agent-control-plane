@@ -41,6 +41,7 @@ COMMAND_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acp-lab-e2e.XXXXXX")"
 COMMANDS_FILE="$COMMAND_DIR/commands.sh"
 
 cleanup() {
+  make kind-port-forward-stop >/dev/null 2>&1 || true
   rm -rf "$COMMAND_DIR"
 }
 on_exit() {
@@ -80,6 +81,7 @@ run_doc_block() {
   local pattern="$2"
   local block_file="$COMMAND_DIR/${label//[^a-zA-Z0-9]/_}.sh"
 
+  # Intentionally execute trusted repo markdown so the lab copy/paste path stays tested.
   awk -v pat="$pattern" '
     /^```bash[[:space:]]*$/ { in_block = 1; block = ""; next }
     /^```[[:space:]]*$/ {
@@ -179,6 +181,7 @@ pass "Kind namespace exists: $NAMESPACE"
 ACPCTL="$(find_acpctl)"
 if [ -n "$ACPCTL" ]; then
   export ACPCTL
+  export AMBIENT_PROJECT="$PROJECT_ID"
   pass "acpctl found: $ACPCTL"
 else
   die "acpctl found"
@@ -207,8 +210,7 @@ section "6. Verify ACP records from markdown commands"
 
 run_doc_block "catalog-inspection" 'agent list --project-id vteam-product-swarm'
 
-PROJECT_OUT="$("$ACPCTL" get project "$PROJECT_ID" 2>&1 || true)"
-if echo "$PROJECT_OUT" | grep -q "$PROJECT_ID"; then
+if "$ACPCTL" get project "$PROJECT_ID" >/dev/null 2>&1; then
   pass "Project exists: $PROJECT_ID"
 else
   fail "Project exists: $PROJECT_ID"

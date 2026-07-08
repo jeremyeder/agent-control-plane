@@ -95,7 +95,7 @@ The catalog includes:
 Apply it to a local ACP cluster:
 
 ```bash
-acpctl apply -k examples/vteam-catalog/codebase-maintainers --project tenant-b
+acpctl apply -k examples/vteam-catalog/codebase-maintainers --project codebase-maintainers
 ```
 
 The example also includes a synthetic work packet:
