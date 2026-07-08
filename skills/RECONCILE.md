@@ -136,6 +136,9 @@ Severity: `blocker` > `critical` > `major` > `minor`
 | P8 | control-plane | RESUME_AFTER_SEQ env var | CP | **done** | minor | CP queries max seq via `SessionMessages().List()` on resume. Sets `RESUME_AFTER_SEQ` env var. Runner uses seq-based filtering with time-based fallback. |
 | P9 | mcp-server | MCP HTTP endpoint in api-server | BE | partial | minor | Blocked: needs new api-server plugin, process spawning, `openapi.mcp.yaml`. Token exchange client exists in ambient-mcp. |
 | P10 | scheduled-session | Idempotency UNIQUE constraint | BE | **done** | minor | Verified: UNIQUE index `idx_sessions_schedule_idempotency` exists in migration 202606230002. |
+| P11 | agent-sandbox-config | Git repo payload clone + SSH delivery | CP | **done** | major | `cloneRepo()` via go-git, `tarDirectory()` streams tar excluding `.git`, `writeRepoPayloadViaSSH()` extracts via SSH. `convertPayloads()` dispatches content vs repo. 5min timeout for repo payloads. |
+| P12 | agent-sandbox-config | Payload mutual exclusivity validation | CP | partial | minor | `convertPayloads()` warns and skips payloads with both `content` and `repo_url`. API-level OpenAPI `oneOf` validation not yet enforced. |
+| P13 | gateway-provisioning | failSession condition format for UI visibility | CP+FE | **done** | major | Conditions now include `status: "False"`, `reason: "SetupFailed"`, `message: <detail>`. `SandboxFailure` added to UI `CONDITION_TITLES` map. Users now see clone/upload failures in session detail. |
 
 ### UI Gaps
 
@@ -228,6 +231,7 @@ Gaps grouped by execution wave. Each wave gates the next.
 | 2026-07-05 | (pending) | E2E validation: Kind deploy + LLM round-trip | 90.3% | All 3 components rebuilt and deployed to Kind. LLM round-trip confirmed: Hello world + 2+2=4. |
 | 2026-07-06 | 2213d3cc | Wave 8 executed: U7, U8 + OpenShell cleanup | 90.7% | Sidebar label → "Config". Gear icon in nav header. Removed non-OpenShell dual-mode paths, GitOps info boxes, "Generate YAML" button labels. |
 | 2026-07-06 | 1fbebf75 | Wave 9: FE consistency + type safety | 90.7% | Dynamic lifecycle badges for providers/policies (was hardcoded GitOps). Narrow YAML input types (AgentYamlInput, ProviderYamlInput, PolicyYamlInput). Removed namespace fields from all create sheets (inherited from project). Renamed configmap-yaml-preview → yaml-preview. Provider types narrowed to github/vertex/generic. Image field disabled (coming soon). All buttons → "Generate X Manifest". |
+| 2026-07-07 | 8d5903d3 | Git repo payload support: P11,P13 done, P12 partial | 89.6% | go-git clone + tar SSH delivery, failSession condition fix, UI SandboxFailure title. 3 new reqs tracked (251 total). |
 | 2026-07-08 | 8fb60a30 | PR #281 reconciliation: gap analysis | 86.9% | PR #281 merged: gateway-provisioning spec rewritten from ConfigMap to API-driven `kind: Gateway`. 11 new gaps (P11-P21), 3 divergences resolved (D1-D3), 1 new divergence (D4). Waves 10-13 planned for Gateway API resource implementation. |
 | 2026-07-08 | (pending) | Wave 10 executed: P11 | 87.3% | Gateway API resource fully implemented: plugin (model, DAO, service, handler, presenter, migration, mock), OpenAPI spec, SDK codegen (Go/Python/TypeScript). `go vet ./...` clean, `golangci-lint run` 0 issues. |
 | 2026-07-08 | (pending) | Wave 11 executed: P13, P15 | 88.0% | Shared kustomize library extracted to `ambient-sdk/go-sdk/kustomize/`. CLI refactored to use shared library. Gateway kind added to `acpctl apply` with reconcile semantics. |
