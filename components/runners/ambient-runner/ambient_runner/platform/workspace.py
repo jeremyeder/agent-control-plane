@@ -161,7 +161,7 @@ def resolve_workspace_paths(context: RunnerContext) -> tuple[str, list[str]]:
             logger.error(f"Failed to create working directory: {e}")
             cwd_path = context.workspace_path
 
-    session_config_path = runner_config.get_session_config_path()
+    session_config_path = context.session_config_path
     if (
         session_config_path
         and session_config_path != cwd_path

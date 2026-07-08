@@ -34,7 +34,6 @@ from ambient_runner.bridge import (
     setup_bridge_observability,
 )
 from ambient_runner.bridges.claude.session import SessionManager
-from ambient_runner.platform.config import get_session_config_path
 from ambient_runner.platform.context import RunnerContext
 
 logger = logging.getLogger(__name__)
@@ -148,6 +147,7 @@ class ClaudeBridge(PlatformBridge):
         self._configured_model: str = ""
         self._cwd_path: str = ""
         self._add_dirs: list[str] = []
+        self._session_config_path: str | None = None
         self._mcp_servers: dict = {}
         self._allowed_tools: list[str] = []
         self._system_prompt: dict = {}
@@ -691,6 +691,7 @@ class ClaudeBridge(PlatformBridge):
         self._configured_model = configured_model
         self._cwd_path = cwd_path
         self._add_dirs = add_dirs
+        self._session_config_path = self._context.session_config_path
         self._mcp_servers = mcp_servers
         self._allowed_tools = allowed_tools
         self._system_prompt = system_prompt
@@ -744,7 +745,7 @@ class ClaudeBridge(PlatformBridge):
 
         if self._add_dirs:
             options["add_dirs"] = self._add_dirs
-        if get_session_config_path():
+        if self._session_config_path:
             options["skills"] = "all"
         if self._configured_model:
             options["model"] = self._configured_model
