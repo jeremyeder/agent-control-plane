@@ -107,6 +107,8 @@ type KubeReconcilerConfig struct {
 	CACertFile                     string
 	AllowedSandboxRegistries       []string
 	SandboxReadinessTimeoutSeconds int
+	MLflowTrackingURI              string
+	MLflowExperimentName           string
 }
 
 type SimpleKubeReconciler struct {
@@ -334,30 +336,18 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 		return fmt.Errorf("enabling providers_v2: %w", err)
 	}
 
-	providerNames, inferenceProviders, mlflowEnv, err := r.resolveAgentProviders(ctx, sdk, namespace, project.Name, session, agent)
+	providerNames, inferenceProviders, err := r.resolveAgentProviders(ctx, sdk, namespace, project.Name, session, agent)
 	if err != nil {
 		return fmt.Errorf("resolving agent providers: %w", err)
 	}
 
 	// Resolve global/project credential bindings and create gateway providers
 	// for credential types not already covered by agent provider declarations.
-	credProviders, credMLflowEnv := r.resolveCredentialBasedProviders(ctx, sdk, namespace, project.Name, session, providerNames)
+	credProviders := r.resolveCredentialBasedProviders(ctx, sdk, namespace, project.Name, session, providerNames)
 	providerNames = append(providerNames, credProviders...)
-	for k, v := range credMLflowEnv {
-		if mlflowEnv == nil {
-			mlflowEnv = map[string]string{}
-		}
-		mlflowEnv[k] = v
-	}
 
-	if defaultMLflowName, defaultMLflowEnv, created := r.ensureDefaultMLflowProvider(ctx, namespace, project.Name, providerNames); created {
+	if defaultMLflowName, created := r.ensureDefaultMLflowProvider(ctx, namespace, project.Name, providerNames); created {
 		providerNames = append(providerNames, defaultMLflowName)
-		for k, v := range defaultMLflowEnv {
-			if mlflowEnv == nil {
-				mlflowEnv = map[string]string{}
-			}
-			mlflowEnv[k] = v
-		}
 	}
 
 	if err := r.configureInferenceFromProviders(ctx, namespace, session.LlmModel, inferenceProviders); err != nil {
@@ -383,9 +373,6 @@ func (r *SimpleKubeReconciler) provisionSessionSandbox(ctx context.Context, sess
 
 	env := r.buildSandboxEnv(ctx, session, project.Name, sdk, providerNames)
 	r.mergeAgentEnvironment(env, agent)
-	for k, v := range mlflowEnv {
-		env[k] = v
-	}
 
 	for k, v := range env {
 		if strings.ContainsAny(v, "\n\r") {
@@ -572,12 +559,27 @@ func (r *SimpleKubeReconciler) isAllowedRegistry(image string) bool {
 	return false
 }
 
+// Platform-critical env vars that agent configs must not override.
+var immutableSandboxEnvKeys = map[string]bool{
+	"AMBIENT_CP_TOKEN_URL":        true,
+	"AMBIENT_CP_TOKEN_PUBLIC_KEY": true,
+	"ANTHROPIC_BASE_URL":          true,
+	"ANTHROPIC_API_KEY":           true,
+	"ACP_OPENSHELL_INFERENCE":     true,
+	"AMBIENT_GRPC_URL":            true,
+	"AMBIENT_GRPC_USE_TLS":        true,
+	"AMBIENT_GRPC_CA_CERT_FILE":   true,
+	"AMBIENT_GRPC_ENABLED":        true,
+	"SSL_CERT_FILE":               true,
+	"REQUESTS_CA_BUNDLE":          true,
+}
+
 func (r *SimpleKubeReconciler) mergeAgentEnvironment(env map[string]string, agent *types.Agent) {
 	if agent == nil || len(agent.Environment) == 0 {
 		return
 	}
 	for k, v := range agent.Environment {
-		if _, exists := env[k]; !exists {
+		if !immutableSandboxEnvKeys[k] {
 			env[k] = v
 		}
 	}
@@ -870,12 +872,12 @@ func (r *SimpleKubeReconciler) resolveAgentProviders(
 	namespace, projectName string,
 	session types.Session,
 	agent *types.Agent,
-) (providerNames []string, inferenceProviders map[string]string, mlflowEnv map[string]string, err error) {
+) (providerNames []string, inferenceProviders map[string]string, err error) {
 	if agent == nil || len(agent.Providers) == 0 {
 		r.logger.Info().
 			Str("session_id", session.ID).
 			Msg("agent has no provider declarations; sandbox will have no providers")
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 
 	inferenceProviders = map[string]string{}
@@ -912,7 +914,7 @@ func (r *SimpleKubeReconciler) resolveAgentProviders(
 
 		secretCreds, readErr := r.readProviderSecretCredentials(ctx, namespace, provDecl.Secret)
 		if readErr != nil {
-			return nil, nil, nil, fmt.Errorf("reading secret %s for provider %s: %w", provDecl.Secret, declName, readErr)
+			return nil, nil, fmt.Errorf("reading secret %s for provider %s: %w", provDecl.Secret, declName, readErr)
 		}
 
 		osType := openshell.OpenShellProviderType(provType)
@@ -932,11 +934,11 @@ func (r *SimpleKubeReconciler) resolveAgentProviders(
 			r.logger.Info().Str("provider", osName).Str("type", osType).Msg("gateway provider updated from declaration")
 		} else if st, ok := status.FromError(updErr); ok && st.Code() == codes.NotFound {
 			if _, crErr := r.gateway.CreateProvider(ctx, namespace, &openshellpb.CreateProviderRequest{Provider: providerData}); crErr != nil {
-				return nil, nil, nil, fmt.Errorf("creating provider %s: %w", osName, crErr)
+				return nil, nil, fmt.Errorf("creating provider %s: %w", osName, crErr)
 			}
 			r.logger.Info().Str("provider", osName).Str("type", osType).Msg("gateway provider created from declaration")
 		} else {
-			return nil, nil, nil, fmt.Errorf("updating provider %s: %w", osName, updErr)
+			return nil, nil, fmt.Errorf("updating provider %s: %w", osName, updErr)
 		}
 
 		// Vertex uses short-lived access tokens; configure the gateway to auto-rotate
@@ -944,15 +946,11 @@ func (r *SimpleKubeReconciler) resolveAgentProviders(
 		if provType == "vertex" {
 			credJSON := secretCreds["token"]
 			if credJSON == "" {
-				return nil, nil, nil, fmt.Errorf("vertex provider %s: secret %s must have a 'token' key with the credential JSON", declName, provDecl.Secret)
+				return nil, nil, fmt.Errorf("vertex provider %s: secret %s must have a 'token' key with the credential JSON", declName, provDecl.Secret)
 			}
 			if refreshErr := r.ensureVertexCredentialRefresh(ctx, namespace, osName, credJSON); refreshErr != nil {
-				return nil, nil, nil, fmt.Errorf("configuring credential refresh for provider %s: %w", osName, refreshErr)
+				return nil, nil, fmt.Errorf("configuring credential refresh for provider %s: %w", osName, refreshErr)
 			}
-		}
-
-		if provType == "mlflow" {
-			mlflowEnv = openshell.MLflowSandboxEnvVars(secretCreds)
 		}
 
 		providerNames = append(providerNames, osName)
@@ -966,7 +964,7 @@ func (r *SimpleKubeReconciler) resolveAgentProviders(
 		Strs("providers", providerNames).
 		Msg("resolved providers from agent declarations")
 
-	return providerNames, inferenceProviders, mlflowEnv, nil
+	return providerNames, inferenceProviders, nil
 }
 
 func (r *SimpleKubeReconciler) readProviderSecretCredentials(ctx context.Context, namespace, secretName string) (map[string]string, error) {
@@ -1012,14 +1010,14 @@ func (r *SimpleKubeReconciler) resolveCredentialBasedProviders(
 	namespace, projectName string,
 	session types.Session,
 	existingProviders []string,
-) (additionalProviders []string, mlflowEnv map[string]string) {
+) (additionalProviders []string) {
 	credentialIDs, err := r.resolveCredentialIDs(ctx, sdk, session.ProjectID, session.AgentID)
 	if err != nil {
 		r.logger.Warn().Err(err).Str("session_id", session.ID).Msg("credential binding resolution failed; skipping credential-based providers")
-		return nil, nil
+		return nil
 	}
 	if len(credentialIDs) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	existingSet := map[string]bool{}
@@ -1063,10 +1061,6 @@ func (r *SimpleKubeReconciler) resolveCredentialBasedProviders(
 		}
 
 		additionalProviders = append(additionalProviders, osName)
-
-		if credType == "mlflow" {
-			mlflowEnv = openshell.MLflowSandboxEnvVars(secretData)
-		}
 	}
 
 	if len(additionalProviders) > 0 {
@@ -1076,7 +1070,7 @@ func (r *SimpleKubeReconciler) resolveCredentialBasedProviders(
 			Msg("resolved additional providers from credential bindings")
 	}
 
-	return additionalProviders, mlflowEnv
+	return additionalProviders
 }
 
 // ensureCredentialSecret copies a K8s secret from the control plane namespace
@@ -1135,21 +1129,21 @@ func (r *SimpleKubeReconciler) ensureDefaultMLflowProvider(
 	ctx context.Context,
 	namespace, projectName string,
 	existingProviders []string,
-) (providerName string, mlflowEnv map[string]string, ok bool) {
+) (providerName string, ok bool) {
 	osName := openshell.ProviderName(projectName, "mlflow")
 	for _, p := range existingProviders {
 		if p == osName {
-			return "", nil, false
+			return "", false
 		}
 	}
 
 	secretData, err := r.ensureCredentialSecret(ctx, namespace, "mlflow")
 	if err != nil {
 		r.logger.Debug().Err(err).Msg("no default mlflow secret in CP namespace; skipping default MLflow provider")
-		return "", nil, false
+		return "", false
 	}
 
-	credentials := openshell.MLflowProviderCredentials(secretData)
+	credentials := openshell.ProviderCredentialsFromSecret("mlflow", secretData)
 	providerData := &datapb.Provider{
 		Metadata:    &datapb.ObjectMeta{Name: osName},
 		Type:        "generic",
@@ -1162,16 +1156,15 @@ func (r *SimpleKubeReconciler) ensureDefaultMLflowProvider(
 	} else if st, okSt := status.FromError(updErr); okSt && st.Code() == codes.NotFound {
 		if _, crErr := r.gateway.CreateProvider(ctx, namespace, &openshellpb.CreateProviderRequest{Provider: providerData}); crErr != nil {
 			r.logger.Warn().Err(crErr).Str("provider", osName).Msg("failed to create default MLflow gateway provider; skipping")
-			return "", nil, false
+			return "", false
 		}
 		r.logger.Info().Str("provider", osName).Msg("default MLflow gateway provider created from CP namespace secret")
 	} else {
 		r.logger.Warn().Err(updErr).Str("provider", osName).Msg("failed to update default MLflow gateway provider; skipping")
-		return "", nil, false
+		return "", false
 	}
 
-	mlflowEnv = openshell.MLflowSandboxEnvVars(secretData)
-	return osName, mlflowEnv, true
+	return osName, true
 }
 
 func (r *SimpleKubeReconciler) configureInferenceFromProviders(ctx context.Context, namespace, sessionModel string, inferenceProviders map[string]string) error {
@@ -1359,6 +1352,12 @@ func (r *SimpleKubeReconciler) buildSandboxEnv(ctx context.Context, session type
 				env["OBSERVABILITY_BACKENDS"] = existing + ",mlflow"
 			} else {
 				env["OBSERVABILITY_BACKENDS"] = "mlflow"
+			}
+			if r.cfg.MLflowTrackingURI != "" {
+				env["MLFLOW_TRACKING_URI"] = r.cfg.MLflowTrackingURI
+			}
+			if r.cfg.MLflowExperimentName != "" {
+				env["MLFLOW_EXPERIMENT_NAME"] = r.cfg.MLflowExperimentName
 			}
 			break
 		}
