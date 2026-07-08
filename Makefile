@@ -123,10 +123,10 @@ GOOGLE_APPLICATION_CREDENTIALS ?= $(or $(shell echo $$GOOGLE_APPLICATION_CREDENT
 VERTEX_CRED ?= $(GOOGLE_APPLICATION_CREDENTIALS)
 
 # OpenShell Gateway Configuration (OPENSHELL_USE_GATEWAY=true by default)
-# Provisions two tenant namespaces (tenant-a, tenant-b) with an OpenShell gateway each.
+# Provisions tenant namespaces with an OpenShell gateway each.
 # Override with OPENSHELL_TENANTS="ns1 ns2" to change the set of tenant namespaces.
 OPENSHELL_USE_GATEWAY ?= true
-OPENSHELL_TENANTS ?= tenant-a tenant-b
+OPENSHELL_TENANTS ?= tenant-a tenant-b vteam-product-swarm codebase-maintainers
 AGENT_SANDBOX_VERSION ?= v0.4.6
 
 # Colors for output (using tput for better compatibility, with fallback to printf-compatible codes)

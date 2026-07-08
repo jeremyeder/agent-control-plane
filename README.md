@@ -28,8 +28,11 @@ The Agent Control Plane (ACP) lets teams create and manage AI agentic sessions â
 
 ```bash
 make kind-up
-make kind-port-forward   # ports shown in output
+make kind-port-forward           # ports shown in output
+make kind-setup-openshell-cli    # optional: port-forward to OpenShell gateways
 ```
+
+Once the cluster is running, see [examples/README.md](examples/README.md) to deploy starter agents and vTeam lab environments.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md#local-development-setup) for full local development setup.
 

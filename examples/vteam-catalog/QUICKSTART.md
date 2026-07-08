@@ -171,9 +171,9 @@ current backend port from `make kind-status`.
 ## 7. Optional: Start A Work Packet Session
 
 Starting real sessions needs provider secrets and an OpenShell gateway for the
-`vteam-product-swarm` namespace. The default Kind gateway setup provisions
-`tenant-a` and `tenant-b`; add `vteam-product-swarm` to `OPENSHELL_TENANTS`
-before cluster creation if you want to run this optional step.
+`vteam-product-swarm` namespace. The default `OPENSHELL_TENANTS` includes
+`vteam-product-swarm`, so the namespace and gateway are provisioned
+automatically during `make kind-up`.
 
 After those runtime prerequisites are available, start Stella with the demo work
 packet:
