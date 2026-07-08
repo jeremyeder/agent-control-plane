@@ -20,18 +20,18 @@ examples/
 │       ├── vertex.yaml
 │       ├── github.yaml
 │       └── jira.yaml
-├── overlays/
-│   ├── tenant-a/            # Development tenant
-│   │   ├── project.yaml
-│   │   ├── gateway.yaml
-│   │   ├── credential-vertex.yaml
-│   │   ├── credential-jira.yaml
-│   │   └── credential-github.yaml
-│   └── tenant-b/            # Staging tenant
-│       ├── project.yaml
-│       ├── gateway.yaml
-│       ├── credential-vertex.yaml
-│       └── credential-github.yaml
+└── overlays/
+    ├── tenant-a/            # Development tenant
+    │   ├── project.yaml
+    │   ├── gateway.yaml     # Project-scoped gateway with tenant DNS names
+    │   ├── credential-vertex.yaml
+    │   ├── credential-jira.yaml
+    │   └── credential-github.yaml
+    └── tenant-b/            # Staging tenant
+        ├── project.yaml
+        ├── gateway.yaml
+        ├── credential-vertex.yaml
+        └── credential-github.yaml
 ```
 
 `base/` contains resources shared across all tenants: agent definitions and boilerplate provider integrations (vertex, github, jira). `overlays/` contains the tenant-specific Project, Gateway, and Credentials.
@@ -79,16 +79,14 @@ Each overlay applies the full declarative stack via a single `acpctl apply -k`:
 | **Project** | `overlays/*/project.yaml` | Creates the tenant project with description, prompt, and labels |
 | **Agent** | `base/agents/*.yaml` | Shared agent definitions (hello-world, pr-reviewer, etc.) |
 | **Provider** | `base/providers/*.yaml` | Boilerplate integrations (vertex, github, jira) — shared by all tenants |
-| **Gateway** | `overlays/*/gateway.yaml` | Project-scoped OpenShell gateway with tenant DNS names |
+| **Gateway** | `overlays/*/gateway.yaml` | Project-scoped OpenShell gateway with tenant-specific DNS names |
 | **Credential** | `overlays/*/credential-*.yaml` | Tenant-specific credentials with env-var token references |
 
 ## Prerequisites
 
 ### Provider Secrets
 
-Each provider requires a Kubernetes Secret in the tenant namespace **before**
-running `acpctl apply`. These secrets are consumed by the provider integration
-at session start.
+Each provider requires a Kubernetes Secret in the tenant namespace **before** running `acpctl apply`. These secrets are consumed by the provider integration at session start.
 
 #### Vertex AI (required by all agents)
 
