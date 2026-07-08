@@ -32,6 +32,10 @@ API-driven gateway lifecycle management. Gateways are declared as `kind: Gateway
 
 Configuration reuse patterns using Kustomize bases and overlays for agent, provider, and policy composition. Composition happens at apply time — the control plane only sees fully-resolved ConfigMaps. Extension to the Agent Sandbox Configuration spec.
 
+### [MLflow Tracing](mlflow-tracing.spec.md)
+
+MLflow tracing of Claude SDK interactions, enabled by default when credentials are present. Covers the `mlflow` credential provider, global credential fallback, runner image CA trust, conditional autologging activation, and OPA network policy for gateway mode.
+
 ### [OpenShell Sandbox Observability](openshell-sandbox-observability.spec.md)
 
 Sandbox log streaming and policy display in the session detail UI. Surfaces OpenShell gateway logs (streaming SSE) and effective sandbox policy (filesystem, network, process controls) through the control plane's gateway gRPC channel.
