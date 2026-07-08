@@ -72,6 +72,10 @@ After the sandbox reaches Ready, the control plane executes commands inside it v
 
 See [OpenShell Sandbox Provisioning Spec](specs/platform/openshell-sandbox-provisioning.spec.md) for full details on gateway mode, CRD version compatibility, and configuration.
 
+## vTeam Lab
+
+The [examples/](examples/) directory contains starter agents and multi-agent virtual team definitions. See the [examples README](examples/README.md) for prerequisites, tenant setup, and the full vTeam catalog.
+
 ## Architecture
 
 ```
