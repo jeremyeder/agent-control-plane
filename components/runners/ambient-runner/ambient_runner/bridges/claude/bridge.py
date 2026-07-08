@@ -34,6 +34,7 @@ from ambient_runner.bridge import (
     setup_bridge_observability,
 )
 from ambient_runner.bridges.claude.session import SessionManager
+from ambient_runner.platform.config import get_session_config_path
 from ambient_runner.platform.context import RunnerContext
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ _SDK_OPTIONS_DENYLIST = frozenset(
         "api_key",
         "cli_path",
         "env",
+        "skills",
     }
 )
 
@@ -742,6 +744,8 @@ class ClaudeBridge(PlatformBridge):
 
         if self._add_dirs:
             options["add_dirs"] = self._add_dirs
+        if get_session_config_path():
+            options["skills"] = "all"
         if self._configured_model:
             options["model"] = self._configured_model
 
