@@ -2,11 +2,11 @@
 # E2E test: full gateway agent flow
 #
 # Validates the golden path:
-#   acpctl apply -k  ->  acpctl start  ->  sandbox provisioned  ->  session active
+#   acpctl apply -k  ->  acpctl start  ->  sandbox provisioned  ->  session Running
+#   ->  runner starts inside sandbox  ->  runner /health endpoint responds
 #
 # This test does NOT require a real LLM API key — it validates the platform
-# plumbing up to session start and sandbox creation.  If VERTEX_SA_KEY or
-# ANTHROPIC_API_KEY is available, it also checks that a runner pod is spawned.
+# plumbing from session creation through sandbox provisioning.
 #
 # Prerequisites:
 #   - kind-up with OPENSHELL_USE_GATEWAY=true (default)
