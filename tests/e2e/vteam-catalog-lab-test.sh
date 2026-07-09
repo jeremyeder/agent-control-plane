@@ -203,10 +203,10 @@ fi
 
 assert_doc_has 'make kind-acpctl-login' "Lab uses make kind-acpctl-login"
 assert_doc_has '([Aa][Cc][Pp][Cc][Tt][Ll]).*apply' "Lab applies catalog with acpctl"
-assert_doc_has 'agent list --project-id vteam-product-swarm' "Lab lists vTeam agents"
-assert_doc_has 'provider list --project-id vteam-product-swarm' "Lab lists vTeam providers"
+assert_doc_has 'agent list --project vteam-product-swarm' "Lab lists vTeam agents"
+assert_doc_has 'provider list --project vteam-product-swarm' "Lab lists vTeam providers"
 assert_doc_has 'agent start stella' "Lab includes Stella start command"
-assert_doc_has 'agent sessions stella --project-id vteam-product-swarm' "Lab includes Stella session inspection"
+assert_doc_has 'agent sessions stella --project vteam-product-swarm' "Lab includes Stella session inspection"
 
 section "2. Prerequisites"
 
@@ -246,7 +246,7 @@ section "6. Verify ACP records from markdown commands"
 
 ensure_backend_port_forward "Kind backend port-forward is healthy before inspection"
 
-run_doc_block "catalog-inspection" 'agent list --project-id vteam-product-swarm'
+run_doc_block "catalog-inspection" 'agent list --project vteam-product-swarm'
 
 if "$ACPCTL" get project "$PROJECT_ID" >/dev/null 2>&1; then
   pass "Project exists: $PROJECT_ID"
@@ -254,7 +254,7 @@ else
   fail "Project exists: $PROJECT_ID"
 fi
 
-AGENTS_JSON="$("$ACPCTL" agent list --project-id "$PROJECT_ID" -o json 2>&1 || true)"
+AGENTS_JSON="$("$ACPCTL" agent list --project "$PROJECT_ID" -o json 2>&1 || true)"
 for agent in stella amber parker ryan steve terry; do
   if json_name_exists "$AGENTS_JSON" "$agent"; then
     pass "Agent exists: $agent"
@@ -263,7 +263,7 @@ for agent in stella amber parker ryan steve terry; do
   fi
 done
 
-PROVIDERS_JSON="$("$ACPCTL" provider list --project-id "$PROJECT_ID" -o json 2>&1 || true)"
+PROVIDERS_JSON="$("$ACPCTL" provider list --project "$PROJECT_ID" -o json 2>&1 || true)"
 for provider in vertex github jira; do
   if json_name_exists "$PROVIDERS_JSON" "$provider"; then
     pass "Provider exists: $provider"
