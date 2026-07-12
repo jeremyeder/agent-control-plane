@@ -122,6 +122,7 @@ type KubeReconcilerConfig struct {
 	MLflowAsyncTraceLoggingQueue    string
 	MLflowAutologExcludeFlavors     string
 	MLflowGenAIAutologIntegrations  string
+	MemoryHubMCPURL                 string
 }
 
 type SimpleKubeReconciler struct {
@@ -2578,6 +2579,13 @@ func (r *SimpleKubeReconciler) buildEnv(ctx context.Context, session types.Sessi
 		env = append(env, envVar("NO_PROXY", r.cfg.NoProxy))
 	}
 	env = r.appendMLflowRuntimeEnv(env)
+
+	// Per-user memory-hub MCP server URL. The runner attaches the memory-hub
+	// MCP server (authenticated with the caller's Keycloak JWT) only when this
+	// is set, so per-user memory isolation is opt-in via control-plane config.
+	if r.cfg.MemoryHubMCPURL != "" {
+		env = append(env, envVar("MEMORY_HUB_MCP_URL", r.cfg.MemoryHubMCPURL))
+	}
 
 	if session.SourceScheduledSessionID != "" {
 		env = append(env, envVar("STOP_ON_RUN_FINISHED", "true"))

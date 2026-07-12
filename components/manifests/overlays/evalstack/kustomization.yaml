@@ -1,0 +1,69 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: vteam-evalstack
+
+# All resources land in the ambient-code namespace (same as production).
+namespace: ambient-code
+
+# "Light shim" overlay for the evalstack deployment of ACP.
+# The documented production overlay stays the source of truth; this overlay
+# extends it and layers ONLY evalstack-specific config as small patches.
+#
+# NOTE on openshift-ai / RHOAI + MLflow: the production overlay intentionally
+# does NOT pull in the openshift-ai component (RHOAI/MLflow is owned elsewhere,
+# via the deploy-rhoai-mlflow workflow). evalstack inherits that exclusion, so
+# there is nothing to omit here. MLflow *tracking* config is injected into the
+# control-plane below (it points the runner at an externally-owned MLflow).
+resources:
+- ../production
+- operator-config.yaml
+
+patches:
+# --- SSO: point JWKS validation at the evalstack Keycloak / RH-SSO realm ---
+# Production's ambient-api-server-jwt-args-patch bakes the full api-server
+# command; --jwk-cert-url is command index 9. This targeted JSON 6902 replace
+# overrides only that one arg. Values-driven placeholder — the Helm wrapper
+# (deploy/helm/ambient-code-platform) templatizes this URL via sso.jwksUrl.
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: ambient-api-server
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/command/9
+      value: --jwk-cert-url=https://keycloak.apps.evalstack.example.com/realms/ambient-code/protocol/openid-connect/certs
+
+# --- SSO ACL: which emails may authenticate (email-claim regex) ---
+- path: ambient-api-server-acl-patch.yaml
+  target:
+    version: v1
+    kind: ConfigMap
+    name: ambient-api-server-auth
+
+# --- Control-plane env: model access + memory-hub + MLflow tracking defaults ---
+- path: control-plane-env-patch.yaml
+  target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: ambient-control-plane
+
+# Pin ACP image tags. Registry stays quay.io/ambient_code (images already exist
+# there). The Helm wrapper parameterizes registry + tag; :latest is the
+# currently-published tag and is pinned explicitly here.
+images:
+- name: quay.io/ambient_code/acp_api_server
+  newName: quay.io/ambient_code/acp_api_server
+  newTag: latest
+- name: quay.io/ambient_code/acp_claude_runner
+  newName: quay.io/ambient_code/acp_claude_runner
+  newTag: latest
+- name: quay.io/ambient_code/acp_control_plane
+  newName: quay.io/ambient_code/acp_control_plane
+  newTag: latest
+- name: quay.io/ambient_code/acp_mcp
+  newName: quay.io/ambient_code/acp_mcp
+  newTag: latest

@@ -1,0 +1,59 @@
+# Thin wrapper values for the Ambient Code Platform (ACP) light shim.
+# Only cluster-specific config is templatized here; the ACP production overlay
+# (components/manifests/overlays/production) remains the source of truth for the
+# ~20 base manifests.
+
+# Cluster base domain. Used to derive default SSO and MLflow URLs when those are
+# left empty below (e.g. keycloak.<baseDomain>, mlflow.<baseDomain>).
+baseDomain: apps.evalstack.example.com
+
+# Namespace all resources deploy into (matches the production overlay).
+namespace: ambient-code
+
+# Path to the ACP production overlay this shim extends, RELATIVE TO the rendered
+# kustomization.yaml. Default assumes the rendered shim is placed at
+# components/manifests/overlays/<name>/ (a peer of the production overlay, the
+# same layout as the evalstack overlay). Override with an absolute path if you
+# render the shim elsewhere (see README.md).
+productionOverlayPath: ../production
+
+# ACP container images. Registry stays quay.io/ambient_code (images already
+# published there); only tags are pinned/overridden here.
+image:
+  registry: quay.io/ambient_code
+  tags:
+    apiServer: latest
+    claudeRunner: latest
+    controlPlane: latest
+    mcp: latest
+
+# Single sign-on (Keycloak / RH-SSO).
+sso:
+  # JWKS certs endpoint. Empty => derived: https://keycloak.<baseDomain>/realms/ambient-code/protocol/openid-connect/certs
+  jwksUrl: ""
+  # Regex matched against the JWT "email" claim to authorize callers.
+  aclEmailRegex: '^.*@(redhat\.com|ambient\.code)$'
+
+# Model access for the control-plane operator.
+modelAccess:
+  # "anthropic" (API key via the out-of-band `ambient-anthropic` secret) or "vertex".
+  provider: anthropic
+  vertex:
+    projectId: ""
+    region: global
+    credentialsPath: /app/vertex/ambient-code-key.json
+
+# Per-user memory-hub MCP server, forwarded to runner pods as MEMORY_HUB_MCP_URL.
+memoryHub:
+  # Empty disables memory-hub injection.
+  mcpUrl: "https://memory-hub.ambient-code.svc.cluster.local:8443/mcp"
+
+# MLflow tracking (RHOAI/MLflow is owned externally; this only points the runner at it).
+mlflow:
+  tracking:
+    enabled: true
+    # Empty => derived: https://mlflow.<baseDomain>. Must be https (operator validates).
+    uri: ""
+    auth: kubernetes
+    experiment: ambient-code-sessions
+    workspace: ""

@@ -75,6 +75,25 @@ def build_mcp_servers(
         }
         logger.info("Added ambient MCP sidecar server (SSE): %s", ambient_mcp_url)
 
+    # Memory-hub MCP server (per-user isolation). Attached only when the URL is
+    # configured (MEMORY_HUB_MCP_URL) and the current caller's Keycloak JWT is
+    # available, so each user's memory is scoped by their own bearer token.
+    # NOTE: this relies on the Claude Agent SDK honoring `headers` on `type: http`
+    # MCP entries (McpHttpServerConfig; supported in claude-agent-sdk pinned here).
+    # If a future SDK/CLI drops header support, fall back to a per-user API-key
+    # path. TODO(memory-hub): implement API-key fallback if headers stop working.
+    memory_hub_url = os.getenv("MEMORY_HUB_MCP_URL", "").strip()
+    if memory_hub_url and getattr(context, "caller_token", ""):
+        auth = context.caller_token
+        if not auth.lower().startswith("bearer "):
+            auth = f"Bearer {auth}"
+        mcp_servers["memory-hub"] = {
+            "type": "http",
+            "url": memory_hub_url,
+            "headers": {"Authorization": auth},
+        }
+        logger.info("Added memory-hub MCP server (HTTP, per-user token): %s", memory_hub_url)
+
     # Session control tools
     refresh_creds_tool = create_refresh_credentials_tool(context, sdk_tool)
     session_server = create_sdk_mcp_server(

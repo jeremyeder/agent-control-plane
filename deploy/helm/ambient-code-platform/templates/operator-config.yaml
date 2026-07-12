@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operator-config
+  labels:
+    app: ambient-control-plane
+    component: model-access
+data:
+  USE_VERTEX: {{ if eq .Values.modelAccess.provider "vertex" }}"1"{{ else }}"0"{{ end }}
+  CLOUD_ML_REGION: {{ .Values.modelAccess.vertex.region | quote }}
+  ANTHROPIC_VERTEX_PROJECT_ID: {{ .Values.modelAccess.vertex.projectId | quote }}
+  GOOGLE_APPLICATION_CREDENTIALS: {{ .Values.modelAccess.vertex.credentialsPath | quote }}

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ambient-control-plane
+spec:
+  # Selector repeated from base (identical, immutable-safe no-op) so this patch
+  # also validates as a standalone Deployment for `helm lint`.
+  selector:
+    matchLabels:
+      app: ambient-control-plane
+  template:
+    spec:
+      containers:
+        - name: ambient-control-plane
+{{- if or (eq .Values.modelAccess.provider "anthropic") .Values.memoryHub.mcpUrl .Values.mlflow.tracking.enabled }}
+          env:
+{{- if eq .Values.modelAccess.provider "anthropic" }}
+            # Model access: Anthropic API key (out-of-band `ambient-anthropic` secret).
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ambient-anthropic
+                  key: api-key
+                  optional: true
+{{- end }}
+{{- if .Values.memoryHub.mcpUrl }}
+            # Per-user memory-hub MCP server URL (forwarded to runner pods).
+            - name: MEMORY_HUB_MCP_URL
+              value: {{ .Values.memoryHub.mcpUrl | quote }}
+{{- end }}
+{{- if .Values.mlflow.tracking.enabled }}
+            # MLflow tracking (forwarded to runner pods for GenAI trace logging).
+            - name: MLFLOW_TRACKING_URI
+              value: {{ include "acp.mlflowUri" . | quote }}
+            - name: MLFLOW_TRACKING_AUTH
+              value: {{ .Values.mlflow.tracking.auth | quote }}
+            - name: MLFLOW_EXPERIMENT_NAME
+              value: {{ .Values.mlflow.tracking.experiment | quote }}
+{{- if .Values.mlflow.tracking.workspace }}
+            - name: MLFLOW_WORKSPACE
+              value: {{ .Values.mlflow.tracking.workspace | quote }}
+{{- end }}
+{{- end }}
+{{- end }}

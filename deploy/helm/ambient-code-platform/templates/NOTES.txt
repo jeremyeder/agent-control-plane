@@ -1,0 +1,36 @@
+ambient-code-platform (thin shim) v{{ .Chart.Version }}
+
+This chart does NOT install workloads directly. It renders a kustomize "light
+shim" (a kustomization.yaml + patches) that extends the ACP production overlay:
+  {{ .Values.productionOverlayPath }}
+
+Resolved config:
+  namespace        : {{ .Values.namespace }}
+  image registry   : {{ .Values.image.registry }}
+  SSO JWKS URL     : {{ include "acp.jwksUrl" . }}
+  model access     : {{ .Values.modelAccess.provider }}
+  memory-hub MCP   : {{ .Values.memoryHub.mcpUrl | default "(disabled)" }}
+  MLflow tracking  : {{ if .Values.mlflow.tracking.enabled }}{{ include "acp.mlflowUri" . }}{{ else }}(disabled){{ end }}
+
+Recommended invocation (render into the overlays tree, then apply with kustomize):
+
+  # From the repo root:
+  helm template acp deploy/helm/ambient-code-platform \
+    --set baseDomain=apps.<your-cluster> \
+    --output-dir /tmp/acp-shim
+  # Copy the rendered files next to the production overlay so
+  # productionOverlayPath (../production) resolves:
+  mkdir -p components/manifests/overlays/acp-shim
+  cp /tmp/acp-shim/ambient-code-platform/templates/*.yaml \
+     components/manifests/overlays/acp-shim/
+  oc apply -k components/manifests/overlays/acp-shim
+
+Alternative (Helm post-renderer): use `helm template ... --post-renderer kustomize`
+with a post-renderer that runs `kustomize build` over the emitted kustomization.
+If you render the shim somewhere other than components/manifests/overlays/<name>/,
+override productionOverlayPath with an absolute path, e.g.:
+
+  --set productionOverlayPath=$PWD/components/manifests/overlays/production
+
+Reminder: the `ambient-anthropic` (model key) and `github-app-secret` secrets are
+managed out-of-band and are NOT created by this chart.

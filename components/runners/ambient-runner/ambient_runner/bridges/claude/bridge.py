@@ -207,6 +207,7 @@ class ClaudeBridge(PlatformBridge):
         )
 
         prev_user = self._context.current_user_id if self._context else ""
+        prev_token = self._context.caller_token if self._context else ""
         if self._context:
             self._context.set_current_user(
                 current_user_id, current_user_name, caller_token
@@ -222,10 +223,17 @@ class ClaudeBridge(PlatformBridge):
         # adapter so the new ClaudeSDKClient gets fresh mcp_servers config.
         # The session ID is preserved — --resume works because each SDK client
         # is a new CLI subprocess that spawns fresh MCP servers from os.environ.
+        # Rebuild on token change too (not just user id): the memory-hub MCP
+        # server embeds the caller's Keycloak JWT in its headers, so a refreshed
+        # token for the same user must be re-propagated into mcp_servers.
         user_changed = current_user_id != prev_user
-        if user_changed and self._session_manager.get_existing(thread_id):
+        token_changed = caller_token != prev_token
+        if (user_changed or token_changed) and self._session_manager.get_existing(
+            thread_id
+        ):
             logger.info(
-                f"User changed for thread={thread_id}, "
+                f"Caller context changed for thread={thread_id} "
+                f"(user_changed={user_changed}, token_changed={token_changed}), "
                 "rebuilding MCP servers and adapter with new credentials"
             )
             await self._session_manager.destroy(thread_id)

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: ambient-code-platform
+description: >-
+  Thin Helm wrapper that templatizes cluster-specific config for the Ambient
+  Code Platform (ACP). It emits a small kustomize "light shim" (a kustomization
+  plus patches) that extends the in-repo ACP production overlay
+  (components/manifests/overlays/production). ACP images already exist on
+  quay.io/ambient_code; this chart does not build or ship any images.
+type: application
+version: 0.1.0
+# ACP is versioned/deployed via its kustomize manifests + prebuilt quay images;
+# appVersion tracks the pinned image tag the shim defaults to.
+appVersion: "latest"
+keywords:
+  - ambient-code
+  - acp
+  - kustomize
+  - shim
+home: https://github.com/ambient-code/platform

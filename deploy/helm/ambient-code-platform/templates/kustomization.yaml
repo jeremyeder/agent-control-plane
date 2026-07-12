@@ -1,0 +1,56 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: ambient-code-platform
+
+# All resources land in this namespace (matches production).
+namespace: {{ .Values.namespace }}
+
+# Extend the ACP production overlay (source of truth) and add the operator-config
+# ConfigMap. openshift-ai / RHOAI+MLflow is intentionally not pulled in (owned
+# externally); MLflow tracking config is injected via the control-plane patch.
+resources:
+- {{ .Values.productionOverlayPath }}
+- operator-config.yaml
+
+patches:
+# SSO: override only the api-server --jwk-cert-url arg (command index 9 in the
+# production ambient-api-server-jwt-args-patch).
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: ambient-api-server
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/command/9
+      value: --jwk-cert-url={{ include "acp.jwksUrl" . }}
+# SSO ACL email-claim regex.
+- path: ambient-api-server-acl-patch.yaml
+  target:
+    version: v1
+    kind: ConfigMap
+    name: ambient-api-server-auth
+# Control-plane env: model access + memory-hub + MLflow tracking.
+- path: control-plane-env-patch.yaml
+  target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: ambient-control-plane
+
+# Pin ACP image tags (registry unchanged).
+images:
+- name: {{ .Values.image.registry }}/acp_api_server
+  newName: {{ .Values.image.registry }}/acp_api_server
+  newTag: {{ .Values.image.tags.apiServer | quote }}
+- name: {{ .Values.image.registry }}/acp_claude_runner
+  newName: {{ .Values.image.registry }}/acp_claude_runner
+  newTag: {{ .Values.image.tags.claudeRunner | quote }}
+- name: {{ .Values.image.registry }}/acp_control_plane
+  newName: {{ .Values.image.registry }}/acp_control_plane
+  newTag: {{ .Values.image.tags.controlPlane | quote }}
+- name: {{ .Values.image.registry }}/acp_mcp
+  newName: {{ .Values.image.registry }}/acp_mcp
+  newTag: {{ .Values.image.tags.mcp | quote }}

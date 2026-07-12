@@ -1,0 +1,19 @@
+# Model-access config for the control-plane operator (consumed via optional
+# configMapKeyRef in the base ambient-control-plane Deployment).
+# Default: Anthropic API key path (USE_VERTEX="0"); the API key itself is supplied
+# out-of-band via the optional `ambient-anthropic` secret (see
+# control-plane-env-patch.yaml). To use Google Vertex instead, set USE_VERTEX="1"
+# and populate the Vertex fields + the `ambient-vertex` secret.
+# The Helm wrapper templatizes these via modelAccess.*.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operator-config
+  labels:
+    app: ambient-control-plane
+    component: model-access
+data:
+  USE_VERTEX: "0"
+  CLOUD_ML_REGION: "global"
+  ANTHROPIC_VERTEX_PROJECT_ID: ""
+  GOOGLE_APPLICATION_CREDENTIALS: "/app/vertex/ambient-code-key.json"

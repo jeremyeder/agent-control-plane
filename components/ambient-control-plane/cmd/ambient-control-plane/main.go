@@ -183,6 +183,7 @@ func runKubeMode(ctx context.Context, cfg *config.ControlPlaneConfig) error {
 		MLflowAsyncTraceLoggingQueue:    cfg.MLflowAsyncTraceLoggingQueue,
 		MLflowAutologExcludeFlavors:     cfg.MLflowAutologExcludeFlavors,
 		MLflowGenAIAutologIntegrations:  cfg.MLflowGenAIAutologIntegrations,
+		MemoryHubMCPURL:                 cfg.MemoryHubMCPURL,
 	}
 
 	conn, err := grpc.NewClient(cfg.GRPCServerAddr, grpc.WithTransportCredentials(grpcCredentials(cfg.GRPCUseTLS)))

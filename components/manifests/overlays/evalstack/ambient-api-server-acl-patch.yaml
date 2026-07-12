@@ -1,0 +1,11 @@
+# evalstack SSO ACL: restrict which authenticated identities may use the API.
+# The api-server matches the JWT "email" claim against this regex. Values-driven
+# placeholder — the Helm wrapper templatizes the pattern via sso.aclEmailRegex.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ambient-api-server-auth
+data:
+  acl.yml: |
+    - claim: email
+      pattern: ^.*@(redhat\.com|ambient\.code)$

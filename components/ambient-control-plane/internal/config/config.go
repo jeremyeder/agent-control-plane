@@ -75,6 +75,10 @@ type ControlPlaneConfig struct {
 	MLflowAsyncTraceLoggingQueue    string
 	MLflowAutologExcludeFlavors     string
 	MLflowGenAIAutologIntegrations  string
+	// MemoryHubMCPURL is forwarded to runner pods as MEMORY_HUB_MCP_URL so the
+	// runner can attach the per-user memory-hub MCP server (auth via the
+	// caller's Keycloak JWT). Empty disables it.
+	MemoryHubMCPURL string
 }
 
 func Load() (*ControlPlaneConfig, error) {
@@ -144,6 +148,7 @@ func Load() (*ControlPlaneConfig, error) {
 		MLflowAsyncTraceLoggingQueue:    os.Getenv("MLFLOW_ASYNC_TRACE_LOGGING_MAX_QUEUE_SIZE"),
 		MLflowAutologExcludeFlavors:     os.Getenv("MLFLOW_AUTOLOG_EXCLUDE_FLAVORS"),
 		MLflowGenAIAutologIntegrations:  os.Getenv("MLFLOW_GENAI_AUTOLOG_INTEGRATIONS"),
+		MemoryHubMCPURL:                 strings.TrimSpace(os.Getenv("MEMORY_HUB_MCP_URL")),
 	}
 
 	if cfg.MCPAPIServerURL == "" {

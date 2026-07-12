@@ -1,0 +1,41 @@
+# evalstack control-plane env additions (strategic merge; env entries merge by
+# name, so these are added alongside the base control-plane env).
+# Values-driven placeholders — the Helm wrapper templatizes them via
+# modelAccess.*, memoryHub.mcpUrl, and mlflow.tracking.*.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ambient-control-plane
+spec:
+  # Selector repeated from base (identical, immutable-safe no-op) for parity with
+  # the Helm wrapper's patch (which needs it to pass `helm lint`).
+  selector:
+    matchLabels:
+      app: ambient-control-plane
+  template:
+    spec:
+      containers:
+        - name: ambient-control-plane
+          env:
+            # --- Model access: Anthropic API key (optional). ---
+            # Vertex path is driven by operator-config + the ambient-vertex secret.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ambient-anthropic
+                  key: api-key
+                  optional: true
+            # --- Per-user memory-hub MCP server (forwarded to runner pods). ---
+            # The operator passes this through as MEMORY_HUB_MCP_URL; the runner
+            # attaches the memory-hub MCP server with the caller's Keycloak JWT.
+            - name: MEMORY_HUB_MCP_URL
+              value: "https://memory-hub.ambient-code.svc.cluster.local:8443/mcp"
+            # --- MLflow tracking defaults (RHOAI/MLflow owned externally). ---
+            # The operator forwards MLflow env into every runner pod for GenAI
+            # trace logging. Must be https (operator validates the URI).
+            - name: MLFLOW_TRACKING_URI
+              value: "https://mlflow.apps.evalstack.example.com"
+            - name: MLFLOW_TRACKING_AUTH
+              value: "kubernetes"
+            - name: MLFLOW_EXPERIMENT_NAME
+              value: "ambient-code-sessions"
