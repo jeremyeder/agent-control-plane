@@ -5,8 +5,8 @@ Proto files under `openshell/` are vendored from the [NVIDIA OpenShell](https://
 | Upstream repo   | `github.com/NVIDIA/OpenShell` |
 |---|---|
 | Upstream path   | `proto/` |
-| Vendored tag    | `v0.0.70` |
-| Vendored commit | `a1b2c3d4e5f6` |
+| Vendored tag    | `v0.0.83` |
+| Vendored commit | `e3d26dd3ae0dee247bbc5db368545832757ac493` |
 | Vendored files  | `openshell.proto`, `datamodel.proto`, `sandbox.proto` |
 | Subset          | Sandbox lifecycle, exec, provider management, and log streaming RPCs (not the full proto surface) |
 

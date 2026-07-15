@@ -27,124 +27,7 @@ objects:
 
 # --- Database ---
 
-- apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: ambient-api-server-db
-    namespace: ${NAMESPACE}
-    labels:
-      app: ambient-api-server
-      component: database
-  spec:
-    replicas: 1
-    strategy:
-      type: Recreate
-    selector:
-      matchLabels:
-        app: ambient-api-server
-        component: database
-    template:
-      metadata:
-        labels:
-          app: ambient-api-server
-          component: database
-      spec:
-        securityContext:
-          runAsNonRoot: true
-          seccompProfile:
-            type: RuntimeDefault
-        containers:
-          - name: postgresql
-            image: registry.redhat.io/rhel10/postgresql-16:10.1
-            imagePullPolicy: IfNotPresent
-            ports:
-              - name: postgresql
-                containerPort: 5432
-                protocol: TCP
-            env:
-              - name: POSTGRESQL_USER
-                valueFrom:
-                  secretKeyRef:
-                    name: ambient-api-server-db
-                    key: db.user
-              - name: POSTGRESQL_PASSWORD
-                valueFrom:
-                  secretKeyRef:
-                    name: ambient-api-server-db
-                    key: db.password
-              - name: POSTGRESQL_DATABASE
-                valueFrom:
-                  secretKeyRef:
-                    name: ambient-api-server-db
-                    key: db.name
-            volumeMounts:
-              - name: ambient-api-server-db-data
-                mountPath: /var/lib/pgsql/data
-            resources:
-              requests:
-                cpu: 100m
-                memory: 256Mi
-              limits:
-                cpu: 500m
-                memory: 512Mi
-            readinessProbe:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - pg_isready -U "$POSTGRESQL_USER"
-              initialDelaySeconds: 10
-              periodSeconds: 10
-            livenessProbe:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - pg_isready -U "$POSTGRESQL_USER"
-              initialDelaySeconds: 30
-              periodSeconds: 30
-            securityContext:
-              allowPrivilegeEscalation: false
-              capabilities:
-                drop:
-                  - ALL
-        volumes:
-          - name: ambient-api-server-db-data
-            persistentVolumeClaim:
-              claimName: ambient-api-server-db-data
-
-- apiVersion: v1
-  kind: PersistentVolumeClaim
-  metadata:
-    name: ambient-api-server-db-data
-    namespace: ${NAMESPACE}
-    labels:
-      app: ambient-api-server
-      component: database
-  spec:
-    accessModes:
-      - ReadWriteOnce
-    resources:
-      requests:
-        storage: 1Gi
-
-- apiVersion: v1
-  kind: Service
-  metadata:
-    name: ambient-api-server-db
-    namespace: ${NAMESPACE}
-    labels:
-      app: ambient-api-server
-      component: database
-  spec:
-    selector:
-      app: ambient-api-server
-      component: database
-    ports:
-      - name: postgresql
-        port: 5432
-        targetPort: 5432
-        protocol: TCP
+# Deployed via RDS
 
 # --- API Server ---
 
@@ -241,6 +124,7 @@ objects:
               - --db-password-file=/secrets/db/db.password
               - --db-name-file=/secrets/db/db.name
               - --db-sslmode=${DB_SSLMODE}
+              - --db-rootcert=/secrets/db/db.ca_cert
               - --alsologtostderr
               - -v=4
             volumeMounts:
@@ -284,6 +168,8 @@ objects:
                     optional: true
               - name: CREDENTIAL_ENCRYPTION_ALLOW_PLAINTEXT
                 value: "false"
+              - name: JWK_CERT_URL
+                value: ${KEYCLOAK_REALM_URL}/protocol/openid-connect/certs
             command:
               - /usr/local/bin/ambient-api-server
               - serve
@@ -295,15 +181,13 @@ objects:
               - --enable-jwt=true
               - --enable-authz=true
               - --jwk-cert-file=/configs/authentication/jwks.json
-              - --jwk-cert-url=${KEYCLOAK_REALM_URL}/protocol/openid-connect/certs
               - --enable-https=false
               - --enable-grpc=true
-              - --grpc-enable-tls=false
               - --api-server-bindaddress=:8000
               - --metrics-server-bindaddress=:4433
               - --health-check-server-bindaddress=:4434
-              - --enable-health-check-https=false
               - --db-sslmode=${DB_SSLMODE}
+              - --db-rootcert=/secrets/db/db.ca_cert
               - --db-max-open-connections=50
               - --enable-db-debug=false
               - --enable-metrics-https=false
@@ -500,10 +384,14 @@ objects:
                 value: ambient-vertex
               - name: VERTEX_SECRET_NAMESPACE
                 value: ${NAMESPACE}
-            ports:
-              - name: token
-                containerPort: 8080
-                protocol: TCP
+              - name: MLFLOW_TRACKING_URI
+                value: ${MLFLOW_TRACKING_URI}
+              - name: MLFLOW_EXPERIMENT_NAME
+                value: ${MLFLOW_EXPERIMENT_NAME}
+              - name: MLFLOW_CREDENTIAL_SECRET_NAME
+                value: ${MLFLOW_CREDENTIAL_SECRET_NAME}
+              - name: MLFLOW_CREDENTIAL_SECRET_NAMESPACE
+                value: ${NAMESPACE}
             volumeMounts:
               - name: vertex-credentials
                 mountPath: /app/vertex
@@ -553,6 +441,7 @@ objects:
     labels:
       app: ambient-ui
   spec:
+    serviceAccountName: ambient-ui
     replicas: 1
     selector:
       matchLabels:
@@ -599,6 +488,8 @@ objects:
                 value: ${SSO_REDIRECT_URI}
               - name: NEXT_PUBLIC_PREVIEW_ALLOWED_HOSTS
                 value: ${PREVIEW_ALLOWED_HOSTS}
+              - name: CONTROL_PLANE_URL
+                value: http://ambient-control-plane:8080
             ports:
               - name: http
                 containerPort: 3000
@@ -759,6 +650,15 @@ parameters:
   - name: CLOUD_ML_REGION
     description: Vertex AI region
     value: global
+  - name: MLFLOW_TRACKING_URI
+    description: MLflow tracking URI forwarded to runner sandboxes when configured
+    value: ""
+  - name: MLFLOW_EXPERIMENT_NAME
+    description: Default MLflow experiment for ACP runner traces
+    value: acp-general
+  - name: MLFLOW_CREDENTIAL_SECRET_NAME
+    description: Name of the Vault-materialized MLflow credential secret in the deployment namespace
+    value: mlflow
   - name: PREVIEW_ALLOWED_HOSTS
     description: Comma-separated host globs for ambient-ui preview
     value: "*.openshiftapps.com"

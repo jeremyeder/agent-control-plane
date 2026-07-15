@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Cleanup diskspace
         if: (!cancelled())
@@ -44,7 +44,7 @@ jobs:
           df -h
 
       - name: Cache kubectl and kind
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/k8s-tools/kubectl
@@ -78,6 +78,9 @@ jobs:
           {"type":"service_account","project_id":"test","private_key_id":"dummy","private_key":"-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJBALRiMLAH\n-----END RSA PRIVATE KEY-----\n","client_email":"test@test.iam.gserviceaccount.com","client_id":"0","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}
           JSON
 
+      - name: Add Keycloak host entry for OIDC gateway auth
+        run: echo "127.0.0.1 keycloak-service.ambient-code.svc.cluster.local" | sudo tee -a /etc/hosts
+
       - name: Bring up ACP lab cluster
         run: |
           make kind-up CONTAINER_ENGINE=docker CI_MODE=true VERTEX_CRED=/tmp/vertex.json OPENSHELL_USE_GATEWAY=true
@@ -103,8 +106,8 @@ jobs:
           echo ""
           echo "=== vTeam project records ==="
           acpctl get project vteam-product-swarm 2>&1 || true
-          acpctl agent list --project-id vteam-product-swarm 2>&1 || true
-          acpctl provider list --project-id vteam-product-swarm 2>&1 || true
+          acpctl agent list --project vteam-product-swarm 2>&1 || true
+          acpctl provider list --project vteam-product-swarm 2>&1 || true
 
           echo ""
           echo "=== Recent ambient-code events ==="

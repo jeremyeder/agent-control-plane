@@ -35,6 +35,9 @@ type Resource struct {
 	ServerDnsNames []string          `yaml:"server_dns_names"`
 	Image          string            `yaml:"image"`
 	Config         string            `yaml:"config"`
+	Oidc           map[string]any    `yaml:"oidc,omitempty"`
+	SandboxPolicy  string            `yaml:"sandbox_policy"`
+	Spec           map[string]any    `yaml:"spec"`
 }
 
 type PayloadDecl struct {
@@ -272,6 +275,18 @@ func StrategicMerge(base, patch Resource) Resource {
 	}
 	if len(patch.ServerDnsNames) > 0 {
 		base.ServerDnsNames = patch.ServerDnsNames
+	}
+	if len(patch.Oidc) > 0 {
+		base.Oidc = patch.Oidc
+	}
+	if patch.SandboxPolicy != "" {
+		base.SandboxPolicy = patch.SandboxPolicy
+	}
+	for k, v := range patch.Spec {
+		if base.Spec == nil {
+			base.Spec = make(map[string]any)
+		}
+		base.Spec[k] = v
 	}
 	for k, v := range patch.Environment {
 		if base.Environment == nil {

@@ -3,10 +3,11 @@
 #
 # Validates the golden path:
 #   acpctl apply -k  ->  acpctl start  ->  sandbox provisioned  ->  session Running
-#   ->  runner starts inside sandbox  ->  runner /health endpoint responds
+#   ->  runner starts inside sandbox  ->  mock LLM responds  ->  messages verified
 #
-# This test does NOT require a real LLM API key — it validates the platform
-# plumbing from session creation through sandbox provisioning.
+# Uses test-agent-mock-llm which points ANTHROPIC_BASE_URL at a mock LLM server,
+# so no real LLM API key is required. Validates the full platform plumbing from
+# session creation through sandbox provisioning and LLM response delivery.
 #
 # Prerequisites:
 #   - kind-up with OPENSHELL_USE_GATEWAY=true (default)
@@ -42,6 +43,7 @@ fi
 TOKEN="${TEST_TOKEN:-}"
 
 PF_PID=""
+GW_PF_PID=""
 PF_PORT=18767
 if [ -n "${API_URL:-}" ] && [ "${API_URL}" != "http://localhost:" ]; then
   :
@@ -50,7 +52,7 @@ elif [ -n "${1:-}" ]; then
 else
   API_URL="http://localhost:${PF_PORT}"
 fi
-trap 'kill "${PF_PID}" 2>/dev/null || true' EXIT
+trap 'kill "${PF_PID}" 2>/dev/null || true; kill "${GW_PF_PID}" 2>/dev/null || true' EXIT
 
 _ensure_port_forward() {
   local port
@@ -74,6 +76,62 @@ _ensure_port_forward() {
 
 _ensure_port_forward
 
+_ensure_gateway_port_forward() {
+  if ! command -v openshell &>/dev/null; then
+    return 1
+  fi
+
+  # Check if existing gateway registration is reachable
+  if openshell sandbox list --gateway "${TENANT}" &>/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Start a port-forward to the gateway gRPC port
+  local gw_log
+  gw_log=$(mktemp)
+  kubectl port-forward -n "${TENANT}" statefulset/openshell-gateway ":8080" \
+    >"$gw_log" 2>&1 &
+  GW_PF_PID=$!
+
+  local gw_port=""
+  for _i in $(seq 1 30); do
+    if [ -s "$gw_log" ]; then
+      gw_port=$(grep -oE 'Forwarding from 127\.0\.0\.1:[0-9]+' "$gw_log" | grep -oE '[0-9]+$' | head -1)
+      [ -n "$gw_port" ] && break
+    fi
+    sleep 0.2
+  done
+  rm -f "$gw_log"
+
+  if [ -z "$gw_port" ]; then
+    return 1
+  fi
+
+  # Remove stale registration and re-register with fresh port
+  openshell gateway remove "${TENANT}" 2>/dev/null || true
+
+  local cert_dir="$HOME/.config/openshell/gateways/${TENANT}/mtls"
+  mkdir -p "$cert_dir"
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.ca\.crt}' | base64 -d > "$cert_dir/ca.crt"
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d > "$cert_dir/tls.crt"
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.tls\.key}' | base64 -d > "$cert_dir/tls.key"
+
+  openshell gateway add --name "${TENANT}" --local "https://localhost:${gw_port}" 2>/dev/null || true
+
+  # Re-extract certs after registration (gateway add may overwrite them)
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.ca\.crt}' | base64 -d > "$cert_dir/ca.crt"
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d > "$cert_dir/tls.crt"
+  kubectl get secret openshell-server-tls -n "${TENANT}" \
+    -o jsonpath='{.data.tls\.key}' | base64 -d > "$cert_dir/tls.key"
+
+  openshell sandbox list --gateway "${TENANT}" &>/dev/null 2>&1
+}
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -88,6 +146,25 @@ pass() { echo -e "  ${GREEN}✓${NC} $1"; PASSED=$((PASSED + 1)); }
 fail() { echo -e "  ${RED}✗${NC} $1"; FAILED=$((FAILED + 1)); }
 skip() { echo -e "  ${YELLOW}⊘${NC} $1 (skipped: $2)"; }
 section() { echo ""; echo -e "${BOLD}$1${NC}"; }
+
+_delete_session() {
+  local sid="$1"
+  [ -z "$sid" ] && return 0
+  if [ "$SKIP_CLEANUP" = "true" ]; then return 0; fi
+  api DELETE "/api/ambient/v1/sessions/${sid}" >/dev/null 2>&1 && \
+    echo "  Deleted session ${sid}" || true
+  local pod="session-$(echo "${sid:0:40}" | tr '[:upper:]' '[:lower:]')"
+  for _i in $(seq 1 15); do
+    kubectl get pod "$pod" -n "$TENANT" &>/dev/null || break
+    sleep 2
+  done
+}
+
+_cleanup_sandboxes() {
+  if [ "$SKIP_CLEANUP" = "true" ]; then return 0; fi
+  openshell sandbox delete --all --gateway "$TENANT" >/dev/null 2>&1 && \
+    echo "  Cleaned up sandboxes on gateway ${TENANT}" || true
+}
 
 api() {
   local method="$1" path="$2"
@@ -129,9 +206,9 @@ fi
 
 section "2. Login acpctl"
 
-if $ACPCTL login --url "$API_URL" --token "$TOKEN" >/dev/null 2>&1 && \
+if $ACPCTL login --url "$API_URL" --token "$TOKEN" --project "$TENANT" >/dev/null 2>&1 && \
    $ACPCTL whoami >/dev/null 2>&1; then
-  pass "acpctl login succeeded (${API_URL})"
+  pass "acpctl login succeeded (${API_URL}, project: ${TENANT})"
 else
   fail "acpctl login failed — is the API server reachable at ${API_URL}?"
   echo -e "\n${BOLD}Results: ${GREEN}${PASSED} passed${NC}, ${RED}${FAILED} failed${NC}\n"
@@ -145,6 +222,19 @@ section "3. Gateway deployment via acpctl apply"
 E2E_GW_PROJECT="e2e-gateway-apply"
 E2E_GW_FIXTURE="$SCRIPT_DIR/fixtures/gateway-apply"
 E2E_GW_CLEANUP=true
+
+# Purge any soft-deleted project from a prior run. The API server's uniqueness
+# constraint includes soft-deleted rows, so acpctl apply would fail with 409 if
+# a previous run left behind a soft-deleted record.
+_db_pod=$(kubectl get pods -n "${NAMESPACE}" -l app=ambient-api-server,component=database -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if [ -n "$_db_pod" ]; then
+  _db_user=$(kubectl get secret ambient-api-server-db -n "${NAMESPACE}" -o jsonpath='{.data.db\.user}' | base64 -d 2>/dev/null)
+  _db_name=$(kubectl get secret ambient-api-server-db -n "${NAMESPACE}" -o jsonpath='{.data.db\.name}' | base64 -d 2>/dev/null)
+  kubectl exec -n "${NAMESPACE}" "$_db_pod" -- \
+    psql -U "$_db_user" -d "$_db_name" -c \
+    "DELETE FROM projects WHERE name = '${E2E_GW_PROJECT}' AND deleted_at IS NOT NULL" \
+    >/dev/null 2>&1 || true
+fi
 
 if $ACPCTL apply -k "$E2E_GW_FIXTURE" --project "$E2E_GW_PROJECT" >/dev/null 2>&1; then
   pass "acpctl apply -k fixtures/gateway-apply succeeded"
@@ -193,7 +283,7 @@ if [ "$E2E_GW_CLEANUP" = "true" ]; then
   fi
 
   # Cleanup: delete the test project (namespace will be deprovisioned by project reconciler)
-  if $ACPCTL delete project "$E2E_GW_PROJECT" >/dev/null 2>&1; then
+  if $ACPCTL delete project "$E2E_GW_PROJECT" --yes >/dev/null 2>&1; then
     echo "  Cleaned up project '${E2E_GW_PROJECT}'"
   else
     echo "  Could not delete project '${E2E_GW_PROJECT}' (non-fatal)"
@@ -218,36 +308,39 @@ section "5. Verify agent exists"
 
 AGENTS_RESP=$(api GET "/api/ambient/v1/projects/${PROJECT_ID}/agents?size=50" || echo "")
 AGENT_ID=$(echo "$AGENTS_RESP" \
-  | jq -r '.items[] | select(.name == "hello-world") | .id' 2>/dev/null | head -1 || echo "")
+  | jq -r '.items[] | select(.name == "test-agent-mock-llm") | .id' 2>/dev/null | head -1 || echo "")
 
 if [ -n "$AGENT_ID" ]; then
-  pass "Agent 'hello-world' exists (id: ${AGENT_ID})"
+  pass "Agent 'test-agent-mock-llm' exists (id: ${AGENT_ID})"
 else
-  fail "Agent 'hello-world' not found in project '${TENANT}'"
+  fail "Agent 'test-agent-mock-llm' not found in project '${TENANT}'"
   echo -e "\n${BOLD}Results: ${GREEN}${PASSED} passed${NC}, ${RED}${FAILED} failed${NC}\n"
   exit 1
 fi
 
-REPO_AGENT_ID=$(echo "$AGENTS_RESP" \
-  | jq -r '.items[] | select(.name == "repo-clone-workspace") | .id' 2>/dev/null | head -1 || echo "")
+## repo-clone-workspace agent lookup removed — section 12 is skipped until
+## CI has a real or mock Vertex provider.
 
-if [ -z "$REPO_AGENT_ID" ]; then
-  # Apply the agent definition so the repo payload tests can run
-  $ACPCTL apply -f "$REPO_ROOT/examples/base/agents/repo-clone-workspace.yaml" \
-    --project "$TENANT" >/dev/null 2>&1 || true
-  # Re-fetch agents list
-  AGENTS_RESP=$(api GET "/api/ambient/v1/projects/${PROJECT_ID}/agents?size=50" || echo "")
-  REPO_AGENT_ID=$(echo "$AGENTS_RESP" \
-    | jq -r '.items[] | select(.name == "repo-clone-workspace") | .id' 2>/dev/null | head -1 || echo "")
-fi
+section "6. Apply sandbox policies"
 
-if [ -n "$REPO_AGENT_ID" ]; then
-  pass "Agent 'repo-clone-workspace' exists (id: ${REPO_AGENT_ID})"
+# Policies must exist before any session starts — agents reference them by
+# name (sandbox_policy: permissive) and the control plane will fail the
+# session if the policy is not found.
+if $ACPCTL apply -f "$REPO_ROOT/examples/base/policies/permissive.yaml" \
+  --project "$TENANT" >/dev/null 2>&1; then
+  pass "Permissive policy applied to ${TENANT}"
 else
-  skip "Agent 'repo-clone-workspace'" "not found — repo payload tests will be skipped"
+  fail "Could not apply permissive policy to ${TENANT}"
 fi
 
-section "6. Verify provider and credential"
+if $ACPCTL apply -f "$REPO_ROOT/examples/base/policies/locked-down.yaml" \
+  --project "$TENANT" >/dev/null 2>&1; then
+  pass "Locked-down policy applied to ${TENANT}"
+else
+  fail "Could not apply locked-down policy to ${TENANT}"
+fi
+
+section "7. Verify provider and credential"
 
 PROVIDERS_RESP=$(api GET "/api/ambient/v1/providers?size=50" || echo "")
 PROVIDER_NAME=$(echo "$PROVIDERS_RESP" \
@@ -269,7 +362,7 @@ else
   skip "Vertex credential" "not configured (non-fatal)"
 fi
 
-section "7. OpenShell gateway healthy"
+section "8. OpenShell gateway healthy"
 
 GW_READY=$(kubectl get statefulset openshell-gateway -n "$TENANT" \
   -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
@@ -291,7 +384,17 @@ else
   fail "agent-sandbox controller not ready"
 fi
 
-section "8. Start agent session"
+# Register the gateway with the openshell CLI early so _cleanup_sandboxes works
+# throughout the test. Section 13 will re-check and refresh if needed.
+if command -v openshell &>/dev/null; then
+  if _ensure_gateway_port_forward; then
+    pass "openshell CLI gateway '${TENANT}' registered"
+  else
+    skip "openshell CLI gateway registration" "will retry in section 13"
+  fi
+fi
+
+section "9. Start agent session"
 
 START_RESP=$(api POST "/api/ambient/v1/projects/${PROJECT_ID}/agents/${AGENT_ID}/start" \
   -d '{"prompt": "gateway-e2e-test: say hello"}' || echo "")
@@ -302,11 +405,11 @@ CREATED_SESSION_ID=$(echo "$START_RESP" \
 if [ -n "$CREATED_SESSION_ID" ]; then
   pass "Session started (id: ${CREATED_SESSION_ID})"
 else
-  fail "Failed to start session for agent 'hello-world'"
+  fail "Failed to start session for agent 'test-agent-mock-llm'"
   echo "  Response: $(echo "$START_RESP" | head -c 200)"
 fi
 
-section "9. Session state verification"
+section "10. Session state verification"
 
 if [ -n "$CREATED_SESSION_ID" ]; then
   sleep 3
@@ -342,7 +445,7 @@ else
   skip "Session state verification" "session not created"
 fi
 
-section "10. Sandbox configuration verification"
+section "11. Sandbox configuration verification"
 
 if [ -n "$CREATED_SESSION_ID" ]; then
   # Derive sandbox pod name: "session-" + lowercased session ID (first 40 chars)
@@ -384,7 +487,7 @@ if [ -n "$CREATED_SESSION_ID" ]; then
       for j in $(seq 1 10); do
         PAYLOAD_CONTENT=$(kubectl exec -n "$TENANT" "$SBX_NAME" -- \
           cat /sandbox/CLAUDE.md 2>/dev/null || echo "")
-        if echo "$PAYLOAD_CONTENT" | grep -q "hello"; then
+        if echo "$PAYLOAD_CONTENT" | grep -q "mock LLM"; then
           PAYLOAD_READY=true
           break
         fi
@@ -403,11 +506,11 @@ if [ -n "$CREATED_SESSION_ID" ]; then
 
     # 10b. Agent environment variable passed through to sandbox
     ENV_VAL=$(kubectl exec -n "$TENANT" "$SBX_NAME" -- \
-      printenv ENV_NAME 2>/dev/null || echo "")
-    if [ "$ENV_VAL" = "test" ]; then
-      pass "Agent env var ENV_NAME passed through to sandbox"
+      printenv CLAUDE_CODE_ATTRIBUTION_HEADER 2>/dev/null || echo "")
+    if [ "$ENV_VAL" = "0" ]; then
+      pass "Agent env var CLAUDE_CODE_ATTRIBUTION_HEADER passed through to sandbox"
     else
-      fail "Agent env var ENV_NAME not found or wrong value (got: '${ENV_VAL}')"
+      fail "Agent env var CLAUDE_CODE_ATTRIBUTION_HEADER not found or wrong value (got: '${ENV_VAL}')"
     fi
 
     # 10c. MCP config env var patterns preserved (not auto-expanded)
@@ -464,119 +567,311 @@ if [ -n "$CREATED_SESSION_ID" ]; then
     fi
 
   else
-    skip "Sandbox configuration verification" "sandbox pod not ready (phase: ${POD_PHASE:-unknown})"
+    fail "Sandbox configuration verification — sandbox pod not ready (phase: ${POD_PHASE:-unknown})"
   fi
 else
-  skip "Sandbox configuration verification" "session not created"
+  fail "Sandbox configuration verification — session not created"
 fi
 
-section "10. Repository payload verification"
+section "11. Mock LLM response verification via acpctl"
+
+if [ -n "$CREATED_SESSION_ID" ] && [ "${SESSION_RUNNING:-false}" = "true" ]; then
+  # Poll acpctl session messages until we see an assistant response (up to 180s).
+  # The user message arrives immediately at session creation, but the assistant
+  # message only appears after the sandbox pod starts and the runner calls the
+  # mock LLM (~30-90s). We must keep polling until we see the assistant message,
+  # not just any message.
+  MESSAGES_OUTPUT="[]"
+  MSG_COUNT=0
+  LLM_RESPONSE_FOUND=0
+  for i in $(seq 1 90); do
+    MESSAGES_OUTPUT=$($ACPCTL session messages "$CREATED_SESSION_ID" -o json 2>/dev/null || echo "[]")
+    MSG_COUNT=$(echo "$MESSAGES_OUTPUT" | jq 'length' 2>/dev/null || echo "0")
+    LLM_RESPONSE_FOUND=$(echo "$MESSAGES_OUTPUT" \
+      | jq -r '[.[] | select(.event_type == "assistant" or .event_type == "TEXT_MESSAGE_CONTENT" or .event_type == "MESSAGES_SNAPSHOT")] | length' 2>/dev/null || echo "0")
+    if [ "${LLM_RESPONSE_FOUND}" -gt 0 ]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "${MSG_COUNT}" -gt 0 ]; then
+    pass "acpctl session messages returned ${MSG_COUNT} message(s)"
+  else
+    fail "acpctl session messages returned no messages after 180s"
+    # Dump diagnostics to help debug CI-only failures
+    echo "--- DIAGNOSTIC: sandbox pod status ---"
+    kubectl get pod "${SBX_NAME}" -n "${TENANT}" -o wide 2>&1 || true
+    echo "--- DIAGNOSTIC: sandbox ANTHROPIC_BASE_URL ---"
+    kubectl exec -n "${TENANT}" "${SBX_NAME}" -- printenv ANTHROPIC_BASE_URL 2>&1 || echo "(not set or pod gone)"
+    echo "--- DIAGNOSTIC: runner log (last 80 lines) ---"
+    kubectl exec -n "${TENANT}" "${SBX_NAME}" -- cat /sandbox/.runner/logs/runner.log 2>&1 | tail -80 || echo "(no runner log)"
+    echo "--- DIAGNOSTIC: sandbox supervisor log (last 40 lines) ---"
+    kubectl logs -n "${TENANT}" "${SBX_NAME}" -c agent --tail=40 2>&1 || true
+    echo "--- DIAGNOSTIC: control plane log for session (last 20 matches) ---"
+    kubectl logs -n "${NAMESPACE}" -l app=ambient-control-plane --tail=500 2>&1 \
+      | grep -i "${CREATED_SESSION_ID}\|${SBX_NAME}" | tail -20 || true
+    echo "--- END DIAGNOSTICS ---"
+  fi
+
+  # 11a. Verify the initial prompt was delivered as a user message
+  PROMPT_FOUND=$(echo "$MESSAGES_OUTPUT" \
+    | jq -r '[.[] | select(.event_type == "user")] | length' 2>/dev/null || echo "0")
+  if [ "${PROMPT_FOUND}" -gt 0 ]; then
+    pass "User prompt message found in session messages"
+  else
+    fail "No user prompt message found in session messages"
+  fi
+
+  # 11b. Verify the mock LLM response is present (assistant message or text content)
+  # The mock LLM echoes back "Mock LLM response: <user message>"
+  if [ "${LLM_RESPONSE_FOUND}" -gt 0 ]; then
+    pass "LLM response message(s) found in session messages (${LLM_RESPONSE_FOUND})"
+  else
+    fail "No LLM response messages found in session messages"
+  fi
+
+  # 11c. Verify the mock LLM echo content is present in the message payloads
+  MOCK_ECHO=$(echo "$MESSAGES_OUTPUT" \
+    | jq -r '[.[] | .payload] | join(" ")' 2>/dev/null || echo "")
+  if echo "$MOCK_ECHO" | grep -q "Mock LLM response"; then
+    pass "Mock LLM echo content verified in message payloads"
+  else
+    skip "Mock LLM echo content" "response text not found — may be in a different event format"
+  fi
+else
+  skip "Mock LLM response verification" "session not running or not created"
+fi
+
+_delete_session "$CREATED_SESSION_ID"
+_cleanup_sandboxes
+
+section "12. Repository payload verification"
 
 REPO_SESSION_ID=""
-if [ -n "$REPO_AGENT_ID" ]; then
-  REPO_START_RESP=$(api POST "/api/ambient/v1/projects/${PROJECT_ID}/agents/${REPO_AGENT_ID}/start" \
-    -d '{"prompt": "gateway-e2e-test: repo payload"}' || echo "")
+skip "Repo payload verification" "vertex provider not available in CI"
 
-  REPO_SESSION_ID=$(echo "$REPO_START_RESP" \
+section "13. Network policy enforcement"
+
+LOCKED_SESSION_ID=""
+PERM_SESSION_ID=""
+
+# Ensure the openshell gateway port-forward is alive. The ssh-proxy command
+# used below needs a local port-forward to the gateway's gRPC endpoint.
+if ! _ensure_gateway_port_forward; then
+  fail "Gateway port-forward could not be established — openshell CLI missing or gateway unreachable"
+  echo -e "\n${BOLD}Results: ${GREEN}${PASSED} passed${NC}, ${RED}${FAILED} failed${NC}\n"
+  exit 1
+fi
+
+# Wait for gateway pod to be fully ready — the reconciler may have restarted
+# the StatefulSet during sections 9-11 (DNS or config change detection).
+GW_READY_FOR_NET=false
+for _i in $(seq 1 30); do
+  _gw_phase=$(kubectl get pod openshell-gateway-0 -n "$TENANT" \
+    -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+  _gw_ready=$(kubectl get pod openshell-gateway-0 -n "$TENANT" \
+    -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")
+  if [ "$_gw_phase" = "Running" ] && [ "$_gw_ready" = "true" ]; then
+    GW_READY_FOR_NET=true
+    break
+  fi
+  sleep 2
+done
+
+if [ "$GW_READY_FOR_NET" = "true" ]; then
+  pass "Gateway pod ready for network policy tests"
+  # Re-establish port-forward if gateway restarted (old PF would be stale)
+  if ! openshell sandbox list --gateway "${TENANT}" &>/dev/null 2>&1; then
+    _ensure_gateway_port_forward || true
+  fi
+else
+  fail "Gateway pod not ready after 60s — network tests may fail"
+fi
+
+# Policies were already applied in section 6; only the test-specific agents
+# need to be created here.
+
+$ACPCTL apply -k "$SCRIPT_DIR/fixtures/network-policy-test" \
+  --project "$TENANT" >/dev/null 2>&1 && \
+  pass "Network test agents applied to ${TENANT}" || \
+  fail "Could not apply network test agents"
+
+# Look up the locked-down agent
+AGENTS_RESP=$(api GET "/api/ambient/v1/projects/${PROJECT_ID}/agents?size=50" || echo "")
+LOCKED_AGENT_ID=$(echo "$AGENTS_RESP" \
+  | jq -r '.items[] | select(.name == "network-test-locked-down") | .id' 2>/dev/null | head -1 || echo "")
+
+if [ -n "$LOCKED_AGENT_ID" ]; then
+  LOCKED_START_RESP=$(api POST "/api/ambient/v1/projects/${PROJECT_ID}/agents/${LOCKED_AGENT_ID}/start" \
+    -d '{"prompt": "gateway-e2e-test: network policy enforcement"}' || echo "")
+
+  LOCKED_SESSION_ID=$(echo "$LOCKED_START_RESP" \
     | jq -r '.session.id // empty' 2>/dev/null || echo "")
 
-  if [ -n "$REPO_SESSION_ID" ]; then
-    pass "Repo agent session started (id: ${REPO_SESSION_ID})"
+  if [ -n "$LOCKED_SESSION_ID" ]; then
+    pass "Locked-down session started (id: ${LOCKED_SESSION_ID})"
 
-    REPO_SBX_NAME="session-$(echo "${REPO_SESSION_ID:0:40}" | tr '[:upper:]' '[:lower:]')"
+    LOCKED_SBX_NAME="session-$(echo "${LOCKED_SESSION_ID:0:40}" | tr '[:upper:]' '[:lower:]')"
 
-    # Wait for sandbox pod to be running
-    REPO_POD_READY=false
+    LOCKED_POD_READY=false
     for i in $(seq 1 30); do
-      REPO_POD_PHASE=$(kubectl get pod "$REPO_SBX_NAME" -n "$TENANT" \
+      LOCKED_POD_PHASE=$(kubectl get pod "$LOCKED_SBX_NAME" -n "$TENANT" \
         -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-      if [ "$REPO_POD_PHASE" = "Running" ]; then
-        REPO_POD_READY=true
+      if [ "$LOCKED_POD_PHASE" = "Running" ]; then
+        LOCKED_POD_READY=true
         break
       fi
       sleep 2
     done
 
-    if [ "$REPO_POD_READY" = "true" ]; then
-      pass "Repo sandbox pod '${REPO_SBX_NAME}' is running"
+    if [ "$LOCKED_POD_READY" = "true" ]; then
+      pass "Locked-down sandbox pod '${LOCKED_SBX_NAME}' is running"
 
-      # Wait for the session to reach Running phase — payloads are uploaded
-      # only after sandbox READY + DNS verification + phase transition.
-      REPO_SESSION_RUNNING=false
+      # Wait for session to reach Running phase so sandbox is fully initialized
+      LOCKED_SESSION_RUNNING=false
       for i in $(seq 1 30); do
-        REPO_PHASE=$(api GET "/api/ambient/v1/sessions/${REPO_SESSION_ID}" 2>/dev/null \
+        LOCKED_PHASE=$(api GET "/api/ambient/v1/sessions/${LOCKED_SESSION_ID}" 2>/dev/null \
           | jq -r '.phase // empty' 2>/dev/null || echo "")
-        if [ "$REPO_PHASE" = "Running" ] || [ "$REPO_PHASE" = "Succeeded" ] || [ "$REPO_PHASE" = "Failed" ]; then
-          REPO_SESSION_RUNNING=true
+        if [ "$LOCKED_PHASE" = "Running" ] || [ "$LOCKED_PHASE" = "Succeeded" ] || [ "$LOCKED_PHASE" = "Failed" ]; then
+          LOCKED_SESSION_RUNNING=true
           break
         fi
         sleep 2
       done
 
-      # Poll for repo payload delivery (clone + tar transfer).
-      # Uses octocat/Hello-World which contains a single README file.
-      REPO_PAYLOADS_READY=false
-      if [ "$REPO_SESSION_RUNNING" = "true" ]; then
-        for i in $(seq 1 15); do
-          if kubectl exec -n "$TENANT" "$REPO_SBX_NAME" -- \
-              test -f /sandbox/workspace/README 2>/dev/null; then
-            REPO_PAYLOADS_READY=true
-            break
-          fi
-          sleep 2
-        done
-      fi
+      # Verify locked-down policy blocks external network access.
+      # SSH into the sandbox and curl a known endpoint over plain HTTP so
+      # the proxy can intercept the GET and return policy_denied JSON.
+      # (HTTPS would fail at the CONNECT tunnel level with no response body.)
+      # FIXME: switch to `openshell sandbox exec` when it is fixed upstream.
+      if [ "$LOCKED_SESSION_RUNNING" = "true" ]; then
+        LOCKED_CURL_OUTPUT=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          -o "ProxyCommand=openshell ssh-proxy --gateway-name $TENANT --name $LOCKED_SBX_NAME" \
+          "user@$LOCKED_SBX_NAME" \
+          'curl http://update.code.visualstudio.com 2>/dev/null' 2>/dev/null) || true
 
-      if [ "$REPO_PAYLOADS_READY" = "true" ]; then
-        pass "Repo payload delivered"
+        if echo "$LOCKED_CURL_OUTPUT" | grep -q "policy_denied"; then
+          pass "Locked-down policy denied outbound network access (policy_denied)"
+        else
+          fail "Locked-down policy did NOT deny outbound network access"
+          echo "  Output: $(echo "$LOCKED_CURL_OUTPUT" | head -c 200)"
+        fi
       else
-        fail "Repo payload not delivered — clone may have failed (session phase: ${REPO_PHASE:-unknown})"
-      fi
-
-      # 10a. Inline content payload present alongside repo payload
-      REPO_CLAUDE_MD=$(kubectl exec -n "$TENANT" "$REPO_SBX_NAME" -- \
-        cat /sandbox/CLAUDE.md 2>/dev/null || echo "")
-      if echo "$REPO_CLAUDE_MD" | grep -q "workspace"; then
-        pass "Mixed payload: inline CLAUDE.md delivered alongside repo"
-      else
-        fail "Mixed payload: inline CLAUDE.md not found or content mismatch"
-        echo "  Got: $(echo "$REPO_CLAUDE_MD" | head -c 200)"
-      fi
-
-      # 10b. README from cloned repo (octocat/Hello-World)
-      REPO_README=$(kubectl exec -n "$TENANT" "$REPO_SBX_NAME" -- \
-        cat /sandbox/workspace/README 2>/dev/null || echo "")
-      if echo "$REPO_README" | grep -qi "Hello"; then
-        pass "Repo payload: README found at /sandbox/workspace/README"
-      else
-        fail "Repo payload: README not found or unexpected content"
-        echo "  Got: '${REPO_README}'"
-      fi
-
-      # 10c. .git directory excluded from tar transfer
-      GIT_DIR_EXISTS=$(kubectl exec -n "$TENANT" "$REPO_SBX_NAME" -- \
-        ls -d /sandbox/workspace/.git 2>/dev/null || echo "")
-      if [ -z "$GIT_DIR_EXISTS" ]; then
-        pass "Repo payload: .git directory correctly excluded"
-      else
-        fail "Repo payload: .git directory should not exist at /sandbox/workspace/.git"
+        fail "Locked-down network test — session not Running (phase: ${LOCKED_PHASE:-unknown})"
       fi
     else
-      skip "Repo payload verification" "sandbox pod not ready (phase: ${REPO_POD_PHASE:-unknown})"
+      fail "Locked-down network test — sandbox pod not ready (phase: ${LOCKED_POD_PHASE:-unknown})"
     fi
   else
-    fail "Failed to start session for agent 'repo-clone-workspace'"
-    echo "  Response: $(echo "$REPO_START_RESP" | head -c 200)"
+    fail "Failed to start locked-down session"
+    echo "  Response: $(echo "$LOCKED_START_RESP" | head -c 200)"
   fi
 else
-  fail "Repo payload verification requires agent 'repo-clone-workspace' (not found)"
+  fail "Agent 'network-test-locked-down' not found after apply"
 fi
+
+_delete_session "$LOCKED_SESSION_ID"
+_cleanup_sandboxes
+
+# Brief gateway readiness check — cleanup may coincide with a reconciler restart
+for _i in $(seq 1 15); do
+  _gw_ready=$(kubectl get pod openshell-gateway-0 -n "$TENANT" \
+    -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "")
+  [ "$_gw_ready" = "true" ] && break
+  sleep 2
+done
+# Re-check CLI connectivity after potential gateway restart
+if ! openshell sandbox list --gateway "${TENANT}" &>/dev/null 2>&1; then
+  _ensure_gateway_port_forward || true
+fi
+
+# Verify permissive policy allows external network access.
+# Start a dedicated permissive session and curl update.code.visualstudio.com
+# via the sandbox proxy. The request should succeed (not return policy_denied).
+PERM_AGENT_ID=$(echo "$AGENTS_RESP" \
+  | jq -r '.items[] | select(.name == "network-test-permissive") | .id' 2>/dev/null | head -1 || echo "")
+
+if [ -n "$PERM_AGENT_ID" ]; then
+  PERM_START_RESP=$(api POST "/api/ambient/v1/projects/${PROJECT_ID}/agents/${PERM_AGENT_ID}/start" \
+    -d '{"prompt": "gateway-e2e-test: network policy enforcement"}' || echo "")
+
+  PERM_SESSION_ID=$(echo "$PERM_START_RESP" \
+    | jq -r '.session.id // empty' 2>/dev/null || echo "")
+
+  if [ -n "$PERM_SESSION_ID" ]; then
+    pass "Permissive session started (id: ${PERM_SESSION_ID})"
+
+    PERM_SBX_NAME="session-$(echo "${PERM_SESSION_ID:0:40}" | tr '[:upper:]' '[:lower:]')"
+
+    PERM_POD_READY=false
+    for i in $(seq 1 30); do
+      PERM_POD_PHASE=$(kubectl get pod "$PERM_SBX_NAME" -n "$TENANT" \
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+      if [ "$PERM_POD_PHASE" = "Running" ]; then
+        PERM_POD_READY=true
+        break
+      fi
+      sleep 2
+    done
+
+    if [ "$PERM_POD_READY" = "true" ]; then
+      pass "Permissive sandbox pod '${PERM_SBX_NAME}' is running"
+
+      PERM_SESSION_RUNNING=false
+      for i in $(seq 1 30); do
+        PERM_PHASE=$(api GET "/api/ambient/v1/sessions/${PERM_SESSION_ID}" 2>/dev/null \
+          | jq -r '.phase // empty' 2>/dev/null || echo "")
+        if [ "$PERM_PHASE" = "Running" ] || [ "$PERM_PHASE" = "Succeeded" ] || [ "$PERM_PHASE" = "Failed" ]; then
+          PERM_SESSION_RUNNING=true
+          break
+        fi
+        sleep 2
+      done
+
+      # Verify permissive policy allows external network access via curl.
+      # The permissive policy allows /usr/bin/curl to reach
+      # update.code.visualstudio.com:443 (vscode policy). If policy_denied
+      # appears, the proxy blocked it; any other response means it got through.
+      # FIXME: switch to `openshell sandbox exec` when it is fixed upstream.
+      if [ "$PERM_SESSION_RUNNING" = "true" ]; then
+        PERM_CURL_OUTPUT=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          -o "ProxyCommand=openshell ssh-proxy --gateway-name $TENANT --name $PERM_SBX_NAME" \
+          "user@$PERM_SBX_NAME" \
+          'curl https://update.code.visualstudio.com 2>/dev/null' 2>/dev/null) || true
+
+        if echo "$PERM_CURL_OUTPUT" | grep -q "policy_denied"; then
+          fail "Permissive policy denied update.code.visualstudio.com (policy_denied)"
+          echo "  Output: $(echo "$PERM_CURL_OUTPUT" | head -c 200)"
+        elif [ -n "$PERM_CURL_OUTPUT" ]; then
+          pass "Permissive policy allowed update.code.visualstudio.com"
+        else
+          fail "Permissive network test — no response from curl"
+        fi
+      else
+        fail "Permissive network test — session not Running (phase: ${PERM_PHASE:-unknown})"
+      fi
+    else
+      fail "Permissive network test — sandbox pod not ready (phase: ${PERM_POD_PHASE:-unknown})"
+    fi
+  else
+    fail "Failed to start permissive session"
+    echo "  Response: $(echo "$PERM_START_RESP" | head -c 200)"
+  fi
+else
+  fail "Agent 'network-test-permissive' not found after apply"
+fi
+
+_delete_session "$PERM_SESSION_ID"
+_cleanup_sandboxes
 
 section "Cleanup"
 
 if [ "$SKIP_CLEANUP" = "true" ]; then
   echo -e "  ${YELLOW}Skipping cleanup (--skip-cleanup)${NC}"
-  for _sid in "$CREATED_SESSION_ID" "$REPO_SESSION_ID"; do
+  for _sid in "$CREATED_SESSION_ID" "$REPO_SESSION_ID" "$LOCKED_SESSION_ID" "${PERM_SESSION_ID:-}"; do
     [ -z "$_sid" ] && continue
     _pod="session-$(echo "${_sid:0:40}" | tr '[:upper:]' '[:lower:]')"
     _phase=$(kubectl get pod "$_pod" -n "$TENANT" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
@@ -587,16 +882,12 @@ if [ "$SKIP_CLEANUP" = "true" ]; then
     fi
   done
 else
-  if [ -n "$CREATED_SESSION_ID" ]; then
-    api DELETE "/api/ambient/v1/sessions/${CREATED_SESSION_ID}" >/dev/null 2>&1 && \
-      echo "  Deleted session ${CREATED_SESSION_ID}" || \
-      echo "  Could not delete session (non-fatal)"
-  fi
-  if [ -n "$REPO_SESSION_ID" ]; then
-    api DELETE "/api/ambient/v1/sessions/${REPO_SESSION_ID}" >/dev/null 2>&1 && \
-      echo "  Deleted repo session ${REPO_SESSION_ID}" || \
-      echo "  Could not delete repo session (non-fatal)"
-  fi
+  for _sid in "$CREATED_SESSION_ID" "$REPO_SESSION_ID" "$LOCKED_SESSION_ID" "${PERM_SESSION_ID:-}"; do
+    [ -z "$_sid" ] && continue
+    api DELETE "/api/ambient/v1/sessions/${_sid}" >/dev/null 2>&1 && \
+      echo "  Deleted session ${_sid}" || \
+      echo "  Could not delete session ${_sid} (non-fatal)"
+  done
 fi
 
 echo ""

@@ -18,7 +18,7 @@ spec:
         runAsNonRoot: false # Keycloak upstream image requires root; acceptable in Kind dev only
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.0
+          image: quay.io/keycloak/keycloak:26.6.3
           args:
             - start-dev
             - --import-realm
@@ -70,14 +70,14 @@ spec:
             httpGet:
               path: /realms/ambient-code
               port: 8080
-            initialDelaySeconds: 60
+            initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 10
           livenessProbe:
             httpGet:
               path: /realms/ambient-code
               port: 8080
-            initialDelaySeconds: 120
+            initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 5
       volumes:
@@ -99,7 +99,7 @@ spec:
   selector:
     app: keycloak
   ports:
-    - port: 8080
+    - port: 11880
       targetPort: 8080
       protocol: TCP
       name: http

@@ -39,16 +39,13 @@ The ACP control plane reads the `openshell-client-tls` Secret from the project n
 
 The [Agent Sandbox CRD](https://github.com/kubernetes-sigs/agent-sandbox) (`sandboxes.agents.x-k8s.io`) and its controller must be installed cluster-wide before deploying the gateway. The CRD version must match the API version that the OpenShell gateway expects.
 
-**Version compatibility:** The OpenShell gateway 0.0.70 uses the `agents.x-k8s.io/v1alpha1` API. The agent-sandbox project graduated its API to `v1beta1` in release v0.5.0. Installing the `latest` release (v0.5.0+) will cause sandbox-to-gateway authentication failures because the gateway's K8s ServiceAccount authenticator checks for `v1alpha1` in pod ownerReferences, but the v0.5.0 controller stamps `v1beta1`.
+**Version compatibility:** The agent-sandbox project graduated its API from `v1alpha1` to `v1beta1` in release v0.5.0. The v0.5.0+ CRD includes a conversion webhook that serves both `v1alpha1` and `v1beta1`, so existing `v1alpha1` API calls continue to work. The controller stamps `v1beta1` in ownerReferences. OpenShell gateway 0.0.74+ is compatible with `v1beta1` ownerReferences.
 
-Install the CRD at the version compatible with your gateway:
+Install the CRD:
 
 ```bash
-# For OpenShell gateway ≤ 0.0.70 — use agent-sandbox v0.4.6 (v1alpha1)
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.4.6/manifest.yaml
-
-# For OpenShell gateway with v1beta1 support (future) — use agent-sandbox v0.5.0+
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/latest/download/manifest.yaml
+# Current recommended version (v1beta1 API with v1alpha1 conversion webhook)
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.1/manifest.yaml
 ```
 
 This installs the `agent-sandbox-system` namespace, the CRD, and the sandbox controller. The controller watches for Sandbox CRs and creates pods with ownerReferences — the API version in those ownerReferences must match what the gateway authenticator expects.
@@ -313,6 +310,14 @@ The control plane SHALL pass session configuration to the sandbox as environment
 - AND Kubernetes-specific `valueFrom` / `fieldRef` entries (e.g., `POD_IP`) SHALL be omitted
 - AND `INITIAL_PROMPT` SHALL NOT be included in the gateway environment — the assembled prompt contains newlines which OpenShell strips; the prompt is delivered via file upload instead (see [Payload Upload via SSH](#requirement-payload-upload-via-ssh))
 
+#### Scenario: Agent-overridable inference base URL
+
+- GIVEN a session with an associated agent that declares `ANTHROPIC_BASE_URL` in its `environment` map
+- WHEN the control plane builds the inference execution environment via `inferenceExecEnv(agent)`
+- THEN it SHALL use the agent's `ANTHROPIC_BASE_URL` value instead of the default `https://inference.local`
+- AND `ANTHROPIC_BASE_URL` SHALL NOT be in the `immutableSandboxEnvKeys` set — agents MAY override it to point to custom inference endpoints (e.g., a mock LLM server for testing)
+- AND all other inference env vars (`ANTHROPIC_API_KEY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, etc.) SHALL remain immutable
+
 #### Scenario: Provider-injected environment variable protection
 
 - GIVEN a sandbox with attached providers that inject environment variables (e.g., `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`)
@@ -356,7 +361,7 @@ The `ExecSandbox` RPC is a server-streaming call that returns stdout, stderr, an
 - WHEN the control plane polls `GetSandbox` for readiness
 - THEN it SHALL poll every 2 seconds with a configurable timeout (default 600 seconds, set via `SANDBOX_READINESS_TIMEOUT_SECONDS` env var)
 - AND the control plane SHALL log a progress message every 30 seconds during polling, including sandbox name, session ID, and elapsed time
-- AND if the sandbox enters `SANDBOX_PHASE_ERROR`, the control plane SHALL log an error and stop polling
+- AND if the sandbox enters `SANDBOX_PHASE_ERROR`, the control plane SHALL start a 15-second grace period — logging a warning on first observation and continuing to poll. If the sandbox remains in `SANDBOX_PHASE_ERROR` for at least 15 consecutive seconds, the control plane SHALL log an error, stop polling, and transition the session to `Failed`. If the sandbox recovers (transitions out of `SANDBOX_PHASE_ERROR`) before the grace period expires, the timer resets
 - AND if the timeout expires before `SANDBOX_PHASE_READY`, the control plane SHALL log an error
 
 #### Scenario: Idempotent exec on re-reconcile
@@ -372,6 +377,45 @@ The `ExecSandbox` RPC is a server-streaming call that returns stdout, stderr, an
 - GIVEN the control plane builds the gateway environment map
 - THEN it SHALL NOT include `OPENSHELL_SANDBOX_COMMAND` in the environment
 - AND the runner start command SHALL only be delivered via `ExecSandbox` after the sandbox is ready
+
+#### Requirement: ExecSandbox Retry with Backoff
+
+The `execAfterReady` goroutine SHALL retry `ExecSandboxStreaming` on **all** errors
+(not only gRPC `Unavailable`). Transient failures — supervisor reconnects, sandbox
+network namespace setup delays, binary readiness races — are common during the
+first seconds after `SANDBOX_PHASE_READY` and MUST NOT cause a permanent session
+failure.
+
+| Parameter | Value |
+|-----------|-------|
+| Max attempts | 30 (`maxExecRetries = 29`, loop `0..29`) |
+| Retry delay | 2 seconds (fixed) |
+| Total retry window | ~60 seconds |
+
+On each failed attempt, the control plane SHALL:
+1. Log at WARN with sandbox name, session ID, attempt number, max attempts, and the error
+2. Sleep for the retry delay
+3. Retry `ExecSandboxStreaming` with the same request
+
+On final failure (all 30 attempts exhausted), the control plane SHALL:
+1. Log at ERROR with sandbox name, session ID, total attempts, and the error
+2. Transition the session to `Failed` via `failSession()`
+
+#### Scenario: Transient exec failure recovers
+
+- GIVEN a sandbox has reached `SANDBOX_PHASE_READY`
+- AND the first `ExecSandboxStreaming` call fails (e.g. supervisor not yet listening)
+- WHEN the control plane retries after 2 seconds
+- AND the second attempt succeeds
+- THEN the runner starts normally
+- AND a WARN log is emitted for the failed attempt
+
+#### Scenario: All exec retries exhausted
+
+- GIVEN a sandbox has reached `SANDBOX_PHASE_READY`
+- AND all 30 `ExecSandboxStreaming` attempts fail
+- THEN the session SHALL transition to `Failed`
+- AND an ERROR log is emitted with the total attempt count and last error
 
 ### Requirement: Sandbox Deprovisioning
 
@@ -440,12 +484,24 @@ The status syncer SHALL poll the OpenShell gateway for sandbox phase as a second
 |---|---|---|
 | Sandbox exists, phase `PROVISIONING` | (no change) | Sandbox is starting up |
 | Sandbox exists, phase `READY` | (no change) | Runner is executing normally |
-| Sandbox exists, phase `ERROR` | `Failed` | Gateway detected an error |
+| Sandbox exists, phase `ERROR` (session `Creating`, within 15s grace period) | (no change) | Transient errors during sandbox provisioning — grace period allows recovery |
+| Sandbox exists, phase `ERROR` (session `Creating`, grace period exceeded) | `Failed` | Sustained error during provisioning — sandbox cannot recover |
+| Sandbox exists, phase `ERROR` (session `Running`) | `Failed` | Gateway detected an error after sandbox was operational |
 | Sandbox exists, phase `DELETING` | (no change) | Gateway is cleaning up |
 | Sandbox exists, phase `UNKNOWN` | (no change, log warning) | Transient or unexpected state |
 | Sandbox not found | `Failed` | Abnormal termination (sandbox disappeared while session still Running) |
 
 Sessions in terminal phases are not listed because the syncer skips them before reaching the gateway call.
+
+#### Scenario: Sandbox error grace period during creation
+
+- GIVEN a session in `Creating` phase with a sandbox in `SANDBOX_PHASE_ERROR`
+- WHEN the status syncer first observes the error
+- THEN it SHALL record the timestamp, log a warning, and NOT change the session phase
+- AND on subsequent sync cycles within 15 seconds of the first observation, it SHALL continue to skip the phase update
+- AND if the sandbox remains in `SANDBOX_PHASE_ERROR` for at least 15 seconds, the syncer SHALL transition the session to `Failed`
+- AND if the sandbox transitions out of `SANDBOX_PHASE_ERROR` before the grace period expires, the tracked timestamp SHALL be cleared
+- AND the provisioning poller (`execAfterReady`) SHALL independently enforce the same 15-second grace period — both code paths must agree to prevent one from short-circuiting the other
 
 #### Scenario: Gateway unreachable during sync
 
@@ -514,19 +570,22 @@ The supervisor automatically injects proxy and TLS environment variables into pr
 - AND the SSH path is stricter because it calls `env_clear()` (the entrypoint inherits the supervisor's environment minus 4 supervisor-only vars: `SANDBOX_TOKEN`, `SANDBOX_TOKEN_FILE`, `K8S_SA_TOKEN_FILE`, `PROVIDER_SPIFFE_WORKLOAD_API_SOCKET`)
 - AND the `ns_fd` for `setns()` can silently be `None` if the namespace file open fails (the supervisor logs a warning and falls back to running without network namespace isolation)
 
-### Requirement: ACP Internal Network Policy Injection
+### Requirement: Platform Network Policy Injection
 
-The control plane SHALL inject an `_acp_internal` network policy rule into the sandbox **after creation** using OpenShell's `UpdateConfig` RPC with `merge_operations`. This permits the runner process (Python/uvicorn) to reach the ACP control plane and API server through the supervisor proxy. Without this, all cluster-internal traffic from the runner will be denied by the OPA policy engine with `DENIED FORWARD`.
+The control plane SHALL inject platform-required network policy rules (`_acp_internal` and `_mlflow_rh`) into every sandbox. These rules permit the runner process (Python/uvicorn) to reach the ACP control plane, API server, and MLflow tracking endpoint through the supervisor proxy. Without `_acp_internal`, all cluster-internal traffic from the runner will be denied by the OPA policy engine with `DENIED FORWARD`.
 
-The `_acp_internal` rule SHALL NOT be included in the `CreateSandboxRequest.Spec.Policy` field, because doing so replaces the sandbox's entire default policy — stripping rules the sandbox depends on. The `merge_operations` approach (equivalent to `openshell policy update <sandbox-name> --add-allow`) is additive: it adds or replaces only the `_acp_internal` rule while preserving all other rules in the sandbox's default policy.
+**Injection uses a dual approach:**
 
-#### Scenario: ACP internal endpoints injected post-creation
+1. **At `CreateSandbox` time** — when an agent declares a `sandbox_policy`, the control plane calls `mergePlatformRules()` to inject both rules directly into the resolved `SandboxPolicy`'s `NetworkPolicies` map before passing it to `CreateSandbox`. The gateway receives the complete policy (agent rules + platform rules) upfront.
+2. **Post-ready via `UpdateConfig`** — after the sandbox reports READY, the control plane calls `UpdateConfig` with `platformMergeOperations()` containing `AddNetworkRule` operations for both `_acp_internal` and `_mlflow_rh`. This is additive (equivalent to `openshell policy update <sandbox-name> --add-allow`): it adds or replaces only the targeted rules while preserving all other rules. This ensures platform rules are present regardless of whether an agent-specific policy was set.
+
+#### Scenario: Platform endpoints injected post-ready
 
 - GIVEN a sandbox has been created via `CreateSandbox` and has received its default policy from OpenShell
 - AND the runner process will run inside the sandbox network namespace
 - AND all traffic routes through the supervisor's HTTP CONNECT proxy at `10.200.0.1:3128`
 - AND the proxy evaluates each CONNECT request against the OPA policy
-- WHEN the control plane injects the `_acp_internal` rule via `UpdateConfig` merge operations
+- WHEN the control plane injects platform rules via `UpdateConfig` merge operations
 - THEN the `_acp_internal` network policy rule SHALL allow traffic to:
 
 | Endpoint | Port | Purpose |
@@ -538,19 +597,45 @@ The `_acp_internal` rule SHALL NOT be included in the `CreateSandboxRequest.Spec
 | `ambient-api-server.{namespace}.svc` | 9000 | API server gRPC |
 | `ambient-api-server.{namespace}.svc.cluster.local` | 9000 | API server gRPC (FQDN) |
 
+- AND the `_mlflow_rh` network policy rule SHALL allow traffic to:
+
+| Endpoint | Port | Purpose |
+|----------|------|---------|
+| `mlflow.apps.int.spoke.prod.us-west-2.aws.paas.redhat.com` | 443 | MLflow tracking |
+
 - AND `{namespace}` SHALL be the control plane's runtime namespace (`CP_RUNTIME_NAMESPACE`)
-- AND allowed binaries SHALL include `/sandbox/.venv/bin/python`, `/sandbox/.venv/bin/python3`, `/sandbox/.venv/bin/uvicorn`, and `/sandbox/.uv/python/cpython-*/bin/python*`
+- AND allowed binaries for `_acp_internal` SHALL include `/sandbox/.venv/bin/python`, `/sandbox/.venv/bin/python3`, `/sandbox/.venv/bin/uvicorn`, and `/sandbox/.uv/python/cpython-*/bin/python*`
+- AND allowed binaries for `_mlflow_rh` SHALL include `/sandbox/.venv/bin/python`, `/sandbox/.venv/bin/python3`, and `/sandbox/.venv/bin/uvicorn`
 - AND both short (`svc`) and fully-qualified (`svc.cluster.local`) hostnames SHALL be listed because the proxy resolves based on the exact hostname in the CONNECT request
 - AND all other rules in the sandbox's default policy SHALL be preserved
+
+#### Scenario: Platform rules merged into agent-specific policy at CreateSandbox
+
+- GIVEN an agent declares `sandbox_policy: restricted`
+- AND the `restricted` policy has been resolved from the project
+- WHEN the control plane builds the `CreateSandboxRequest`
+- THEN it SHALL call `mergePlatformRules()` to inject `_acp_internal` and `_mlflow_rh` into the policy's `NetworkPolicies` map
+- AND the merged policy (containing both agent-declared rules and platform rules) SHALL be passed to the `CreateSandbox` RPC
+- AND the post-ready `UpdateConfig` SHALL still run as a safety net to reinforce platform rules
 
 #### Scenario: Default sandbox policy preserved during injection
 
 - GIVEN a sandbox's default policy contains rules for provider traffic, DNS, or other platform concerns
-- WHEN the control plane injects `_acp_internal` via `UpdateConfig` merge operations
+- WHEN the control plane injects platform rules via `UpdateConfig` merge operations
 - THEN the existing default policy rules SHALL remain intact and unmodified
-- AND the `_acp_internal` rule SHALL be added alongside them
+- AND the `_acp_internal` and `_mlflow_rh` rules SHALL be added alongside them
 
-#### Scenario: Missing ACP internal policy causes runner failure
+#### Scenario: Policy merge confirmation via UpdateConfig response
+
+- GIVEN the control plane has called `UpdateConfig` with the `_acp_internal` merge operation
+- WHEN the gateway processes the merge
+- THEN the `UpdateConfigResponse` SHALL include the new `version` (uint32) and `policy_hash` (string)
+- AND a successful response SHALL serve as the definitive confirmation that the merge has been applied
+- AND the control plane SHALL NOT poll sandbox logs to verify the merge — the synchronous `UpdateConfig` RPC is authoritative
+- AND the control plane SHALL log the returned `policy_version` and `policy_hash` for observability
+- AND the entrypoint execution SHALL proceed immediately after a successful `UpdateConfig` response
+
+#### Scenario: Missing platform policy causes runner failure
 
 - GIVEN the `_acp_internal` network policy rule has not been injected (e.g., `UpdateConfig` merge failed)
 - WHEN the runner starts and attempts to fetch a CP token via `AMBIENT_CP_TOKEN_URL`
@@ -566,10 +651,11 @@ The control plane SHALL configure DNS resolution for sandboxes by patching the S
 
 - GIVEN a sandbox has been created via `CreateSandbox`
 - WHEN the control plane prepares the sandbox for runner execution
-- THEN it SHALL patch the `agents.x-k8s.io/v1alpha1` Sandbox CR using a Kubernetes merge-patch on `spec.podTemplate.spec.dnsConfig` with `options: [{name: ndots, value: "1"}]`
+- THEN it SHALL patch the `agents.x-k8s.io/v1beta1` Sandbox CR using a Kubernetes merge-patch on `spec.podTemplate.spec.dnsConfig` with `options: [{name: ndots, value: "1"}]`
+- AND the patch SHALL retry up to 5 times with linear backoff (attempt * 500ms) on transient failures, logging a warning on each retry with the attempt number
 - AND it SHALL delete the sandbox pod to trigger recreation by the sandbox controller with the updated DNS config
 - AND if the pod deletion fails with NotFound, the error SHALL be ignored (pod may not exist yet)
-- AND DNS patching failures SHALL be logged as warnings but SHALL NOT block sandbox provisioning
+- AND DNS patching failures (after all retries exhausted) SHALL be logged as warnings but SHALL NOT block sandbox provisioning
 
 #### Scenario: DNS configuration on re-reconcile
 
@@ -847,7 +933,7 @@ The control plane SHALL expose configuration for OpenShell gateway mode alongsid
 | [kube_reconciler.go] `configureInference()` | New method — called after `ensureGatewayProviders`; sets gateway inference routing via `SetClusterInference` when an inference-capable credential is present |
 | `GatewayClient.UploadPayloads()` | New method — opens an SSH session via `CreateSshSession` / `ForwardTcp` gRPC RPCs and writes payload files into the sandbox via `mkdir -p && cat >` SSH commands. Called in the exec-after-Ready goroutine before `ExecSandbox` when the agent has inline content payloads |
 | `GatewayClient.ExecSandboxStreaming()` | New method — fire-and-forget variant of `ExecSandbox` that discards output and uses a caller-provided context, replacing the blocking `ExecSandbox` for long-running processes |
-| [kube_reconciler.go] `patchSandboxDNSConfig()` | New method — patches `agents.x-k8s.io/v1alpha1` Sandbox CR's `podTemplate.spec.dnsConfig` with `ndots:1` and deletes the sandbox pod to force recreation. Workaround for [OpenShell#2053](https://github.com/NVIDIA/OpenShell/issues/2053) |
+| [kube_reconciler.go] `patchSandboxDNSConfig()` | New method — patches `agents.x-k8s.io/v1beta1` Sandbox CR's `podTemplate.spec.dnsConfig` with `ndots:1` and deletes the sandbox pod to force recreation. Workaround for [OpenShell#2053](https://github.com/NVIDIA/OpenShell/issues/2053) |
 | [kube_reconciler.go] `resolveEntrypoint()` | Default entrypoint changed from `/sandbox/runner/entrypoint.sh` to `/runner/entrypoint.sh` to match the gateway runner image's directory layout |
 | `provider_mapping.go` | Updated `vertex` mapping from `vertex-prod` to `google-vertex-ai` to match the OpenShell CLI's provider type |
 | Vendored proto (`openshell.proto`, `sandbox.proto`) | Extended with `UpdateConfig` RPC, `UpdateConfigRequest`/`UpdateConfigResponse` messages, `SettingValue` message, `CreateSshSession` RPC, `ForwardTcp` RPC (bidirectional streaming), `TcpForwardFrame`, `TcpForwardInit`, `SshRelayTarget`, `CreateSshSessionRequest`, and `CreateSshSessionResponse` messages |

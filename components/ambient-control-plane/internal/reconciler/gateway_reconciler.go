@@ -42,7 +42,7 @@ func NewGatewayReconciler(
 ) *GatewayReconciler {
 	defaultImage := os.Getenv("OPENSHELL_GATEWAY_IMAGE")
 	if defaultImage == "" {
-		defaultImage = "ghcr.io/nvidia/openshell/gateway:0.0.74"
+		defaultImage = "ghcr.io/nvidia/openshell/gateway:0.0.83"
 	}
 	return &GatewayReconciler{
 		factory:             factory,
@@ -196,6 +196,18 @@ func (r *GatewayReconciler) reconcileGateway(ctx context.Context, projectClient 
 		Image:          gw.Image,
 		ServerDnsNames: resolvedDnsNames,
 		Config:         gw.Config,
+	}
+
+	if gw.Oidc != nil && gw.Oidc.Issuer != "" {
+		gwConfig.Oidc = &gateway.OidcConfig{
+			Issuer:      gw.Oidc.Issuer,
+			Audience:    gw.Oidc.Audience,
+			JwksTtl:     gw.Oidc.JwksTtl,
+			RolesClaim:  gw.Oidc.RolesClaim,
+			AdminRole:   gw.Oidc.AdminRole,
+			UserRole:    gw.Oidc.UserRole,
+			ScopesClaim: gw.Oidc.ScopesClaim,
+		}
 	}
 
 	if err := gateway.ValidateGatewayConfig(gwConfig); err != nil {

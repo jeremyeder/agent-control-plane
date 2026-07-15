@@ -11,6 +11,50 @@ If you are using a hosted ACP environment, your administrators provide Vertex
 AI access; you only need to supply your own integration credentials, such as
 GitHub and Jira, for examples that use those providers.
 
+### Local Kind cluster
+
+The following covers credential setup for the local Kind cluster. Each
+agent example declares which providers it needs; you only need to set up
+credentials for the providers used by the agents you want to run.
+
+#### Vertex AI (Claude)
+
+If you have local Vertex authentication configured (e.g.
+`gcloud auth application-default login`), `make kind-up` automatically detects
+it and installs the credential into each tenant namespace. Agents that use
+Claude — such as `hello-world` — will work out of the box.
+
+To use a different Vertex service account key:
+
+```bash
+kubectl create secret generic vertex-sa-key \
+  --namespace=tenant-a \
+  --from-literal=token="$(cat vertex.json)"
+```
+
+#### Jira
+
+Agents that integrate with Jira (e.g. `jira-simple-whoami`,
+`jira-issue-categorizer`) require a Jira API token in the tenant namespace:
+
+```bash
+kubectl create secret generic jira \
+  --from-literal=JIRA_USERNAME="you@example.com" \
+  --from-literal=JIRA_API_TOKEN="$(cat ~/jira-token.txt)" \
+  -n tenant-a
+```
+
+#### GitHub
+
+Agents that integrate with GitHub (e.g. `pr-reviewer`) require a GitHub
+personal access token in the tenant namespace:
+
+```bash
+kubectl create secret generic github-creds \
+  --from-literal=token="$(cat ~/github-pat.txt)" \
+  -n tenant-a
+```
+
 ---
 
 ## Starter Examples
@@ -31,6 +75,8 @@ examples/
 │   │   └── jira-issue-categorizer.yaml
 │   ├── gateways/            # Base gateway template
 │   │   └── openshell-gateway.yaml
+│   ├── policies/            # Sandbox policies (applied before agents)
+│   │   └── permissive.yaml
 │   └── providers/           # Boilerplate provider integrations (shared by all tenants)
 │       ├── vertex.yaml
 │       ├── github.yaml
@@ -49,7 +95,7 @@ examples/
         └── credential-github.yaml
 ```
 
-`base/` contains resources shared across all tenants: agent definitions and boilerplate provider integrations (vertex, github, jira). `overlays/` contains the tenant-specific Project, Gateway, and Credentials.
+`base/` contains resources shared across all tenants: agent definitions, sandbox policies, and boilerplate provider integrations (vertex, github, jira). `overlays/` contains the tenant-specific Project, Gateway, and Credentials.
 
 ### Applying
 
@@ -106,6 +152,30 @@ Restricted sandbox policies matching production. Use this tenant to validate age
 **Providers configured:** `vertex`, `github`, `jira` (from base)
 **Credentials:** Vertex AI, GitHub (no Jira credential — agents requiring Jira will not run)
 **Gateway:** OpenShell gateway at `openshell-gateway.tenant-b.svc.cluster.local`
+
+### Policies
+
+#### `permissive`
+
+A wide-open sandbox policy that allows network access to most common services. Defines filesystem access (read-only system paths, read-write `/sandbox` and `/tmp`), Landlock LSM settings, process identity, and network policies for:
+
+- **Claude Code + Vertex AI** — Vertex AI inference, Google auth, Anthropic API
+- **gcloud** — OAuth and IAM token refresh
+- **GitHub** — Git Smart HTTP (read-only clone/fetch) and REST API (read-only)
+- **PyPI** — Python package installation
+- **VS Code / Cursor** — IDE remote server downloads
+- **OpenCode** — npm registry and inference
+- **Atlassian** — Jira and Confluence REST APIs
+
+> **Note:** ACP internal traffic (runner-to-control-plane and runner-to-API-server) is automatically injected by the control plane at sandbox creation time and does not need to be declared in user-facing policies.
+
+Agents reference the policy by name via `sandbox_policy: permissive`. Agents that omit `sandbox_policy` get the gateway's built-in locked-down default (no external network access beyond ACP internal traffic).
+
+To apply the policy independently:
+
+```bash
+acpctl apply -f examples/base/policies/permissive.yaml
+```
 
 ### Agents
 

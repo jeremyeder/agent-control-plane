@@ -3,7 +3,7 @@
 .PHONY: local-dev-token
 .PHONY: local-logs local-logs-api-server local-logs-ui local-logs-control-plane local-shell-api-server local-shell-ui
 .PHONY: local-test local-test-dev local-test-quick test-all local-troubleshoot local-port-forward local-stop-port-forward
-.PHONY: push-all registry-login setup-hooks remove-hooks lint check-minikube check-kind check-kubectl check-local-context dev-bootstrap kind-rebuild kind-reload-ambient-ui kind-reload-ambient-control-plane kind-reload-ambient-api-server kind-reload-runner-openshell kind-status kind-login kind-sso-toggle kind-setup-vertex kind-setup-openshell-cli
+.PHONY: push-all registry-login setup-hooks remove-hooks lint check-minikube check-kind check-kubectl check-local-context dev-bootstrap kind-rebuild kind-reload-ambient-ui kind-reload-ambient-control-plane kind-reload-ambient-api-server kind-reload-runner-openshell kind-load-runner kind-status kind-login kind-sso-toggle kind-setup-vertex kind-setup-openshell-cli kind-setup-openshell-cli-stop
 .PHONY: preflight-cluster preflight dev-env dev
 .PHONY: e2e-test e2e-setup e2e-clean deploy-langfuse-openshift test-gateway-e2e test-vteam-catalog-lab
 .PHONY: unleash-port-forward unleash-status
@@ -74,6 +74,7 @@ MCP_IMAGE ?= acp_mcp:$(IMAGE_TAG)
 
 # Quay runner image reference and tag for kind pre-loading
 RUNNER_QUAY_IMAGE ?= quay.io/ambient_code/acp_runner_openshell
+RUNNER_QUAY_TAG ?= latest
 RUNNER_PRELOAD_TAG ?= kind-preloaded
 RUNNER_PRELOAD_REF := localhost/acp_runner_openshell:$(RUNNER_PRELOAD_TAG)
 
@@ -84,34 +85,17 @@ KIND_IMAGE_PREFIX := localhost/
 # Load local developer config (KIND_HOST, etc.) — gitignored, set once per machine
 -include .env.local
 
-# Kind cluster configuration — derived from git branch for multi-worktree support
-# Each worktree/branch gets a unique cluster name and ports automatically.
-# If the branch-derived cluster doesn't exist, falls back to any running ambient-* cluster.
-# Override any variable: make kind-up KIND_CLUSTER_NAME=ambient-custom KIND_FWD_FRONTEND_PORT=8080
-CLUSTER_SLUG ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$$//' | cut -c1-20)
-CLUSTER_SLUG := $(CLUSTER_SLUG)
-KIND_CLUSTER_NAME ?= $(or \
-  $(shell $(if $(filter podman,$(CONTAINER_ENGINE)),KIND_EXPERIMENTAL_PROVIDER=podman) kind get clusters 2>/dev/null | grep -q '^ambient-$(CLUSTER_SLUG)$$' && echo 'ambient-$(CLUSTER_SLUG)'),\
-  $(shell $(if $(filter podman,$(CONTAINER_ENGINE)),KIND_EXPERIMENTAL_PROVIDER=podman) kind get clusters 2>/dev/null | grep '^ambient-' | head -1),\
-  ambient-$(CLUSTER_SLUG))
-KIND_CLUSTER_NAME := $(KIND_CLUSTER_NAME)
-# Deterministic port offset from slug hash (0-999) — all ports derive from this
-KIND_PORT_OFFSET ?= $(shell printf '%s' '$(CLUSTER_SLUG)' | cksum | awk '{print $$1 % 1000}')
-KIND_PORT_OFFSET := $(KIND_PORT_OFFSET)
-KIND_HTTP_PORT ?= $(shell echo $$((9000 + $(KIND_PORT_OFFSET))))
-KIND_HTTP_PORT := $(KIND_HTTP_PORT)
-KIND_HTTPS_PORT ?= $(shell echo $$((10000 + $(KIND_PORT_OFFSET))))
-KIND_HTTPS_PORT := $(KIND_HTTPS_PORT)
-KIND_FWD_FRONTEND_PORT ?= $(shell echo $$((11000 + $(KIND_PORT_OFFSET))))
-KIND_FWD_FRONTEND_PORT := $(KIND_FWD_FRONTEND_PORT)
-KIND_FWD_BACKEND_PORT ?= $(shell echo $$((12000 + $(KIND_PORT_OFFSET))))
-KIND_FWD_BACKEND_PORT := $(KIND_FWD_BACKEND_PORT)
-KIND_FWD_API_SERVER_PORT ?= $(shell echo $$((13000 + $(KIND_PORT_OFFSET))))
-KIND_FWD_API_SERVER_PORT := $(KIND_FWD_API_SERVER_PORT)
-KIND_FWD_AMBIENT_UI_PORT ?= $(shell echo $$((14000 + $(KIND_PORT_OFFSET))))
-KIND_FWD_AMBIENT_UI_PORT := $(KIND_FWD_AMBIENT_UI_PORT)
-KIND_FWD_KEYCLOAK_PORT ?= $(shell echo $$((18000 + $(KIND_PORT_OFFSET))))
-KIND_FWD_KEYCLOAK_PORT := $(KIND_FWD_KEYCLOAK_PORT)
+# Kind cluster configuration — fixed name and ports for simplicity.
+# Override any variable: make kind-up KIND_CLUSTER_NAME=my-cluster KIND_FWD_FRONTEND_PORT=8080
+KIND_CLUSTER_NAME ?= ambient-dev
+KIND_HTTP_PORT ?= 9080
+KIND_HTTPS_PORT ?= 9443
+KIND_FWD_FRONTEND_PORT ?= 11080
+KIND_FWD_BACKEND_PORT ?= 12080
+KIND_FWD_API_SERVER_PORT ?= 13080
+KIND_FWD_AMBIENT_UI_PORT ?= 14080
+KIND_FWD_KEYCLOAK_PORT ?= 11880
+KIND_FWD_GATEWAY_BASE_PORT ?= 15080
 # Remote kind host — set to Tailscale IP/hostname of the Linux build machine.
 # When set, kubeconfig is rewritten so kubectl/port-forward work from Mac.
 KIND_HOST ?=
@@ -119,6 +103,7 @@ KIND_HOST ?=
 # Vertex AI Configuration (for LOCAL_VERTEX=true)
 # These inherit from environment if set, or can be overridden on command line
 LOCAL_IMAGES ?= false
+LOCAL_RUNNER ?= false
 LOCAL_VERTEX ?= false
 OPENSHELL_USE_GATEWAY ?= true
 ANTHROPIC_VERTEX_PROJECT_ID ?= $(shell echo $$ANTHROPIC_VERTEX_PROJECT_ID)
@@ -130,9 +115,11 @@ VERTEX_CRED ?= $(GOOGLE_APPLICATION_CREDENTIALS)
 # OpenShell Gateway Configuration (OPENSHELL_USE_GATEWAY=true by default)
 # Provisions tenant namespaces with an OpenShell gateway each.
 # Override with OPENSHELL_TENANTS="ns1 ns2" to change the set of tenant namespaces.
+# Skip acpctl apply for specific tenants: SKIP_TENANT_SETUP="tenant-c"
 OPENSHELL_USE_GATEWAY ?= true
-OPENSHELL_TENANTS ?= tenant-a tenant-b vteam-product-swarm codebase-maintainers
-AGENT_SANDBOX_VERSION ?= v0.4.6
+OPENSHELL_TENANTS ?= tenant-a tenant-b tenant-c vteam-product-swarm codebase-maintainers
+SKIP_TENANT_SETUP ?=
+AGENT_SANDBOX_VERSION ?= v0.5.1
 
 # Colors for output (using tput for better compatibility, with fallback to printf-compatible codes)
 # Use shell assignment to evaluate tput at runtime if available
@@ -173,13 +160,13 @@ help: ## Display this help message
 	@echo '  NAMESPACE=$(NAMESPACE)'
 	@echo '  PLATFORM=$(PLATFORM) (detected: $(DETECTED_PLATFORM) from $(HOST_OS)/$(HOST_ARCH))'
 	@echo ''
-	@echo '$(COLOR_BOLD)Kind Cluster (current worktree):$(COLOR_RESET)'
-	@echo '  CLUSTER_SLUG=$(CLUSTER_SLUG)'
+	@echo '$(COLOR_BOLD)Kind Cluster:$(COLOR_RESET)'
 	@echo '  KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME)'
 	@echo '  Ports: frontend=$(KIND_FWD_FRONTEND_PORT) backend=$(KIND_FWD_BACKEND_PORT) http=$(KIND_HTTP_PORT) https=$(KIND_HTTPS_PORT)'
 	@echo ''
 	@echo '$(COLOR_BOLD)Examples:$(COLOR_RESET)'
 	@echo '  make kind-up LOCAL_IMAGES=true    Build from source and deploy to kind'
+	@echo '  make kind-up LOCAL_RUNNER=true    Build runner from source, use Quay for everything else'
 	@echo '  make kind-rebuild                 Rebuild and reload all components in kind'
 	@echo '  make kind-status                  Show all kind clusters and their ports'
 	@echo '  make kind-up CONTAINER_ENGINE=docker'
@@ -192,6 +179,16 @@ vendor-openshell-proto: ## Vendor OpenShell proto files and regenerate Go stubs.
 	@test -n "$(REF)" || (echo "Usage: make vendor-openshell-proto REF=<tag-or-sha>"; exit 1)
 	bash components/ambient-control-plane/scripts/vendor-proto.sh $(REF)
 
+##@ Dependency Updates
+
+update-openshell: ## Update OpenShell to a new version (protos + images). Usage: make update-openshell VERSION=v0.0.83
+	@test -n "$(VERSION)" || (echo "Usage: make update-openshell VERSION=<tag>"; exit 1)
+	bash scripts/update-openshell.sh $(VERSION)
+
+update-agent-sandbox: ## Update agent-sandbox CRD version. Usage: make update-agent-sandbox VERSION=v0.5.1
+	@test -n "$(VERSION)" || (echo "Usage: make update-agent-sandbox VERSION=<tag>"; exit 1)
+	bash scripts/update-agent-sandbox.sh $(VERSION)
+
 ##@ Building
 
 MCP_BUILD_TARGETS := build-mcp build-credential-sidecars
@@ -199,7 +196,7 @@ ifeq ($(OPENSHELL_USE_GATEWAY),true)
 MCP_BUILD_TARGETS :=
 endif
 
-build-all: build-runner build-runner-openshell build-api-server build-control-plane build-ambient-ui $(MCP_BUILD_TARGETS) ## Build all container images
+build-all: build-runner-openshell build-api-server build-control-plane build-ambient-ui $(MCP_BUILD_TARGETS) ## Build all container images
 
 build-ambient-ui: ## Build ambient-ui image
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building ambient-ui with $(CONTAINER_ENGINE)..."
@@ -789,7 +786,7 @@ dev-env-ambient-ui: check-kubectl ## Generate components/ambient-ui/.env.local f
 		echo "# Generated by make dev-env-ambient-ui — do not commit"; \
 		echo "API_SERVER_URL=http://localhost:$(KIND_FWD_API_SERVER_PORT)"; \
 		echo "NEXT_PUBLIC_PREVIEW_ALLOWED_HOSTS=localhost:*,127.0.0.1:*"; \
-		echo "SSO_ISSUER_URL=http://localhost:$(KIND_FWD_KEYCLOAK_PORT)/realms/ambient-code"; \
+		echo "SSO_ISSUER_URL=http://keycloak-service.ambient-code.svc.cluster.local:$(KIND_FWD_KEYCLOAK_PORT)/realms/ambient-code"; \
 		echo "SSO_CLIENT_ID=ambient-frontend"; \
 		echo "SSO_CLIENT_SECRET=dev-secret-do-not-use-in-prod"; \
 		echo "SSO_REDIRECT_URI=http://localhost:3001/api/auth/sso/callback"; \
@@ -839,7 +836,7 @@ dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=ambient
 	trap cleanup INT TERM; \
 	pkill -f "port-forward.*ambient-api-server" 2>/dev/null || true; \
 	pkill -f "port-forward.*keycloak-service" 2>/dev/null || true; \
-	WANT_KC="http://localhost:$(KIND_FWD_KEYCLOAK_PORT)"; \
+	WANT_KC="http://keycloak-service.ambient-code.svc.cluster.local:11880"; \
 	CUR_KC=$$(kubectl get deployment keycloak -n $(NAMESPACE) -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KC_HOSTNAME")].value}' 2>/dev/null); \
 	if [ "$$CUR_KC" != "$$WANT_KC" ]; then \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Patching Keycloak hostname: $$CUR_KC → $$WANT_KC"; \
@@ -850,7 +847,7 @@ dev: ## Local dev: preflight, cluster, dev-env, port-forwards; COMPONENT=ambient
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Keycloak hostname already correct"; \
 	fi; \
 	kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server $(KIND_FWD_API_SERVER_PORT):8000 >/tmp/acp-dev-pf-api.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
-	kubectl port-forward -n $(NAMESPACE) svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >/tmp/acp-dev-pf-keycloak.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
+	kubectl port-forward -n $(NAMESPACE) svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):11880 >/tmp/acp-dev-pf-keycloak.log 2>&1 & PF_PIDS="$$PF_PIDS $$!"; \
 	sleep 2; \
 	echo "$(COLOR_GREEN)✓$(COLOR_RESET) API server  → http://localhost:$(KIND_FWD_API_SERVER_PORT)"; \
 	echo "$(COLOR_GREEN)✓$(COLOR_RESET) Keycloak    → http://localhost:$(KIND_FWD_KEYCLOAK_PORT)"; \
@@ -883,7 +880,7 @@ benchmark-ci: ## Run component benchmarks in CI mode
 		$(if $(CANDIDATE),--candidate-ref $(CANDIDATE)) \
 		$(if $(FORMAT),--format $(FORMAT))
 
-kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platform (LOCAL_IMAGES=true builds from source)
+kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platform (LOCAL_IMAGES=true builds all from source; LOCAL_RUNNER=true builds only runner from source)
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Starting kind cluster '$(KIND_CLUSTER_NAME)'..."
 	@KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) KIND_HTTP_PORT=$(KIND_HTTP_PORT) KIND_HTTPS_PORT=$(KIND_HTTPS_PORT) KIND_HOST=$(KIND_HOST) CONTAINER_ENGINE=$(CONTAINER_ENGINE) ./tests/infra/setup-kind.sh
 	@if [ -n "$(KIND_HOST)" ]; then \
@@ -920,20 +917,26 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 	else \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Deploying with Quay.io images..."; \
 		kubectl apply --validate=false -k components/manifests/overlays/kind/; \
-		$(MAKE) --no-print-directory _kind-preload-runner; \
-		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Patching control plane to use pre-loaded runner image..."; \
-		kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
-			OPENSHELL_RUNNER_IMAGE=$(RUNNER_PRELOAD_REF) $(QUIET_REDIRECT); \
+		if [ "$(LOCAL_RUNNER)" = "true" ]; then \
+			echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building runner from source..."; \
+			$(MAKE) --no-print-directory kind-load-runner; \
+			echo "$(COLOR_BLUE)▶$(COLOR_RESET) Patching control plane to use locally-built runner image..."; \
+			kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
+				OPENSHELL_RUNNER_IMAGE=localhost/acp_runner_openshell:latest $(QUIET_REDIRECT); \
+		else \
+			$(MAKE) --no-print-directory _kind-preload-runner; \
+			echo "$(COLOR_BLUE)▶$(COLOR_RESET) Patching control plane to use pre-loaded runner image..."; \
+			kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
+				OPENSHELL_RUNNER_IMAGE=$(RUNNER_PRELOAD_REF) $(QUIET_REDIRECT); \
+		fi; \
 	fi
-	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for pods..."
-	@./tests/infra/wait-for-ready.sh
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Configuring OpenShell mode (gateway=$(OPENSHELL_USE_GATEWAY))..."
 	@kubectl set env deployment/ambient-api-server -n $(NAMESPACE) \
 		OPENSHELL_USE_GATEWAY=$(OPENSHELL_USE_GATEWAY) $(QUIET_REDIRECT)
 	@kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
 		OPENSHELL_USE_GATEWAY=$(OPENSHELL_USE_GATEWAY) $(QUIET_REDIRECT)
-	@kubectl rollout status deployment/ambient-api-server -n $(NAMESPACE) --timeout=60s $(QUIET_REDIRECT)
-	@kubectl rollout status deployment/ambient-control-plane -n $(NAMESPACE) --timeout=60s $(QUIET_REDIRECT)
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Waiting for pods..."
+	@./tests/infra/wait-for-ready.sh
 	@if [ "$(OPENSHELL_USE_GATEWAY)" = "true" ]; then \
 		echo "$(COLOR_GREEN)✓$(COLOR_RESET) OpenShell: gateway mode (default)"; \
 	else \
@@ -942,6 +945,30 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Configuring SSO..."
 	@NAMESPACE=$(NAMESPACE) KIND_FWD_AMBIENT_UI_PORT=$(KIND_FWD_AMBIENT_UI_PORT) KIND_FWD_KEYCLOAK_PORT=$(KIND_FWD_KEYCLOAK_PORT) \
 		./scripts/setup-kind-sso.sh
+	@KC_HOST="keycloak-service.ambient-code.svc.cluster.local"; \
+	if ! grep -qE "^\s*(127\.0\.0\.1|::1)\s+.*$$KC_HOST" /etc/hosts 2>/dev/null; then \
+		if [ "$(CI_MODE)" = "true" ]; then \
+			echo "127.0.0.1 $$KC_HOST" | sudo tee -a /etc/hosts >/dev/null; \
+			echo "$(COLOR_GREEN)✓$(COLOR_RESET) Added $$KC_HOST to /etc/hosts"; \
+		else \
+			echo "$(COLOR_YELLOW)⚠$(COLOR_RESET) $$KC_HOST is not in /etc/hosts."; \
+			echo "  OIDC gateway authentication requires this hostname to resolve to localhost."; \
+			printf "  Add it now? (requires sudo) [y/N] "; \
+			read -r _ans; \
+			case "$$_ans" in \
+				y|Y|yes|YES) \
+					echo "127.0.0.1 $$KC_HOST" | sudo tee -a /etc/hosts >/dev/null; \
+					echo "$(COLOR_GREEN)✓$(COLOR_RESET) Added $$KC_HOST to /etc/hosts"; \
+					;; \
+				*) \
+					echo "  Skipped. Add it manually if OIDC gateways fail:"; \
+					echo "    echo \"127.0.0.1 $$KC_HOST\" | sudo tee -a /etc/hosts"; \
+					;; \
+			esac; \
+		fi; \
+	else \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) $$KC_HOST already in /etc/hosts"; \
+	fi
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Initializing MinIO..."
 	@./tests/infra/init-minio.sh
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Extracting test token..."
@@ -957,6 +984,11 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 		ANTHROPIC_VERTEX_PROJECT_ID="$(ANTHROPIC_VERTEX_PROJECT_ID)" \
 		CLOUD_ML_REGION="$(CLOUD_ML_REGION)" \
 		./scripts/setup-kind-openshell.sh; \
+		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building and deploying mock LLM server..."; \
+		$(MAKE) --no-print-directory kind-load-mock-llm; \
+		kubectl apply -k tests/mock-llm/manifests/ $(QUIET_REDIRECT); \
+		kubectl rollout status deployment/mock-llm -n $(NAMESPACE) --timeout=60s; \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Mock LLM server deployed"; \
 		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Applying tenant fleet definitions via acpctl..."; \
 		ACPCTL=components/ambient-cli/acpctl; \
 		PF_PORT=18766; \
@@ -967,6 +999,10 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 		TOKEN=$$(kubectl get secret test-user-token -n $(NAMESPACE) -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null); \
 		$$ACPCTL login --url "http://localhost:$${PF_PORT}" --token "$$TOKEN" >/dev/null 2>&1; \
 		for ns in $(OPENSHELL_TENANTS); do \
+			if echo " $(SKIP_TENANT_SETUP) " | grep -q " $$ns "; then \
+				echo "  $$ns: skipped (SKIP_TENANT_SETUP)"; \
+				continue; \
+			fi; \
 			if [ -f "$(VERTEX_CRED)" ]; then \
 				kubectl create secret generic vertex-sa-key \
 					--namespace="$$ns" \
@@ -995,7 +1031,7 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 	@$(MAKE) --no-print-directory _kind-start-port-forward
 	@echo ""
 	@echo "$(COLOR_BOLD)Access the platform:$(COLOR_RESET)"
-	@echo "  Cluster:  $(KIND_CLUSTER_NAME) (slug: $(CLUSTER_SLUG))"
+	@echo "  Cluster:  $(KIND_CLUSTER_NAME)"
 	@echo ""
 	@echo "  Frontend:   http://localhost:$(KIND_FWD_FRONTEND_PORT)"
 	@echo "  Backend:    http://localhost:$(KIND_FWD_BACKEND_PORT)"
@@ -1142,7 +1178,7 @@ _kind-start-port-forward:
 	@kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service $(KIND_FWD_FRONTEND_PORT):3000 >$(KIND_PF_DIR)/kind-pf-frontend.log 2>&1 & echo $$! > $(KIND_PF_DIR)/kind-pf-frontend.pid
 	@kubectl port-forward -n $(NAMESPACE) svc/ambient-api-server $(KIND_FWD_BACKEND_PORT):8000 >$(KIND_PF_DIR)/kind-pf-backend.log 2>&1 & echo $$! > $(KIND_PF_DIR)/kind-pf-backend.pid
 	@kubectl port-forward -n $(NAMESPACE) svc/ambient-ui-service $(KIND_FWD_AMBIENT_UI_PORT):3000 >$(KIND_PF_DIR)/kind-pf-ambient-ui.log 2>&1 & echo $$! > $(KIND_PF_DIR)/kind-pf-ambient-ui.pid
-	@kubectl port-forward -n $(NAMESPACE) svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):8080 >$(KIND_PF_DIR)/kind-pf-keycloak.log 2>&1 & echo $$! > $(KIND_PF_DIR)/kind-pf-keycloak.pid
+	@kubectl port-forward -n $(NAMESPACE) svc/keycloak-service $(KIND_FWD_KEYCLOAK_PORT):11880 >$(KIND_PF_DIR)/kind-pf-keycloak.log 2>&1 & echo $$! > $(KIND_PF_DIR)/kind-pf-keycloak.pid
 	@sleep 1
 	@FAILED=0; \
 	for svc in frontend backend ambient-ui keycloak; do \
@@ -1255,9 +1291,42 @@ screenshots-clean: ## Remove generated screenshots
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Screenshot output cleaned"
 
 kind-rebuild: check-kind check-kubectl check-local-context _kind-require-cluster ## Rebuild, reload, and restart all components in kind
-	@$(MAKE) --no-print-directory kind-reload-ambient-ui
-	@$(MAKE) --no-print-directory kind-reload-ambient-control-plane
-	@$(MAKE) --no-print-directory kind-reload-ambient-api-server
+	@_CHANGED=$$(git diff --name-only HEAD -- 2>/dev/null; git diff --name-only --cached -- 2>/dev/null; git ls-files --others --exclude-standard -- 2>/dev/null); \
+	_DO_UI=false; _DO_CP=false; _DO_API=false; \
+	if [ -z "$$_CHANGED" ]; then \
+		echo "$(COLOR_YELLOW)▶$(COLOR_RESET) No changed files detected — rebuilding all components"; \
+		_DO_UI=true; _DO_CP=true; _DO_API=true; \
+	else \
+		if echo "$$_CHANGED" | grep -q '^components/ambient-sdk/'; then \
+			echo "$(COLOR_YELLOW)▶$(COLOR_RESET) ambient-sdk changed — rebuilding all consumers"; \
+			_DO_UI=true; _DO_CP=true; _DO_API=true; \
+		fi; \
+		if echo "$$_CHANGED" | grep -q '^components/ambient-ui/'; then _DO_UI=true; fi; \
+		if echo "$$_CHANGED" | grep -q '^components/ambient-control-plane/'; then _DO_CP=true; fi; \
+		if echo "$$_CHANGED" | grep -q '^components/ambient-api-server/'; then _DO_API=true; _DO_CP=true; fi; \
+		: "control-plane copies ambient-api-server/ and imports its gRPC package, so api-server changes also rebuild control-plane"; \
+		if ! $$_DO_UI && ! $$_DO_CP && ! $$_DO_API; then \
+			echo "$(COLOR_YELLOW)▶$(COLOR_RESET) No component paths changed — rebuilding all components"; \
+			_DO_UI=true; _DO_CP=true; _DO_API=true; \
+		fi; \
+	fi; \
+	_PIDS=""; _FAIL=0; \
+	if $$_DO_UI; then \
+		$(MAKE) --no-print-directory kind-reload-ambient-ui & _PIDS="$$_PIDS $$!"; \
+	fi; \
+	if $$_DO_CP; then \
+		$(MAKE) --no-print-directory kind-reload-ambient-control-plane & _PIDS="$$_PIDS $$!"; \
+	fi; \
+	if $$_DO_API; then \
+		$(MAKE) --no-print-directory kind-reload-ambient-api-server & _PIDS="$$_PIDS $$!"; \
+	fi; \
+	for _pid in $$_PIDS; do \
+		if ! wait $$_pid; then _FAIL=1; fi; \
+	done; \
+	if [ $$_FAIL -ne 0 ]; then \
+		echo "$(COLOR_RED)✗$(COLOR_RESET) One or more component rebuilds failed"; \
+		exit 1; \
+	fi
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) All components rebuilt and restarted"
 
 kind-reload-ambient-ui: check-kind check-kubectl check-local-context ## Rebuild and reload ambient-ui only (kind)
@@ -1298,16 +1367,51 @@ kind-reload-runner-openshell: check-kind check-kubectl check-local-context ## Re
 		--build-arg GIT_COMMIT=$(shell git rev-parse HEAD) \
 		-t $(RUNNER_OPENSHELL_IMAGE) . $(QUIET_REDIRECT) || \
 		{ echo "$(COLOR_RED)✗$(COLOR_RESET) Build failed. Run without QUIET=1 for full output."; exit 1; }
-	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading OpenShell runner into kind cluster..."
+	@_TAG=$$(git rev-parse --short HEAD)-$$(date +%s) && \
+	_IMG=$$(echo "$(RUNNER_OPENSHELL_IMAGE)" | cut -d: -f1) && \
+	$(CONTAINER_ENGINE) tag $(RUNNER_OPENSHELL_IMAGE) localhost/$$_IMG:$$_TAG && \
+	echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading localhost/$$_IMG:$$_TAG into kind cluster ($(KIND_CLUSTER_NAME))..." && \
+	$(CONTAINER_ENGINE) save localhost/$$_IMG:$$_TAG | \
+		$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
+		ctr --namespace=k8s.io images import - && \
+	echo "$(COLOR_GREEN)✓$(COLOR_RESET) OpenShell runner image loaded as localhost/$$_IMG:$$_TAG" && \
+	echo "$(COLOR_BLUE)▶$(COLOR_RESET) Updating control plane env vars to use localhost/$$_IMG:$$_TAG..." && \
+	kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
+		OPENSHELL_RUNNER_IMAGE=localhost/$$_IMG:$$_TAG $(QUIET_REDIRECT) && \
+	kubectl rollout status deployment/ambient-control-plane -n $(NAMESPACE) --timeout=60s && \
+	echo "$(COLOR_GREEN)✓$(COLOR_RESET) OpenShell runner reloaded (tag: $$_TAG)"
+
+kind-load-runner: build-runner-openshell check-kind check-kubectl check-local-context ## Build OpenShell runner image and load into kind (skips if already present)
 	@_IMG=$$(echo "$(RUNNER_OPENSHELL_IMAGE)" | cut -d: -f1) && \
-		$(CONTAINER_ENGINE) tag $(RUNNER_OPENSHELL_IMAGE) localhost/$$_IMG:latest && \
-		kind load docker-image localhost/$$_IMG:latest --name $(KIND_CLUSTER_NAME) && \
-		echo "$(COLOR_GREEN)✓$(COLOR_RESET) OpenShell runner image loaded as localhost/$$_IMG:latest"
-	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Updating control plane env vars to use localhost/acp_runner_openshell:latest..."
-	@kubectl set env deployment/ambient-control-plane -n $(NAMESPACE) \
-		OPENSHELL_RUNNER_IMAGE=localhost/acp_runner_openshell:latest $(QUIET_REDIRECT)
-	@kubectl rollout status deployment/ambient-control-plane -n $(NAMESPACE) --timeout=60s
-	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) OpenShell runner reloaded — new sessions will use the updated image"
+	_REF=localhost/$$_IMG:latest && \
+	$(CONTAINER_ENGINE) tag $(RUNNER_OPENSHELL_IMAGE) $$_REF 2>/dev/null || true; \
+	if $(CONTAINER_ENGINE) exec $(KIND_CLUSTER_NAME)-control-plane \
+		ctr --namespace=k8s.io images check "name==$$_REF" 2>/dev/null | grep -q "$$_REF"; then \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Runner image already loaded in kind: $$_REF (skipping)"; \
+	else \
+		echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading $$_REF into kind cluster ($(KIND_CLUSTER_NAME))..."; \
+		if [ "$(CONTAINER_ENGINE)" = "podman" ] || [ -n "$(KIND_HOST)" ]; then \
+			$(CONTAINER_ENGINE) save $$_REF | \
+				$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
+				ctr --namespace=k8s.io images import -; \
+		else \
+			$(CONTAINER_ENGINE) save $$_REF | \
+				kind load image-archive /dev/stdin --name $(KIND_CLUSTER_NAME); \
+		fi; \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Runner image loaded: $$_REF"; \
+	fi
+
+build-mock-llm: ## Build mock LLM server image for e2e testing
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Building mock-llm image..."
+	@$(CONTAINER_ENGINE) build $(PLATFORM_FLAG) -t localhost/mock-llm:latest tests/mock-llm $(QUIET_REDIRECT)
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) mock-llm image built"
+
+kind-load-mock-llm: build-mock-llm check-kind check-kubectl check-local-context ## Build and load mock LLM image into kind
+	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading mock-llm into kind cluster ($(KIND_CLUSTER_NAME))..."
+	@$(CONTAINER_ENGINE) save localhost/mock-llm:latest | \
+		$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
+		ctr --namespace=k8s.io images import -
+	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) mock-llm image loaded"
 
 kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both frontend and backend)
 	@UNLEASH_ADMIN_TOKEN=$$(kubectl get secret unleash-credentials -n $(NAMESPACE) -o jsonpath='{.data.admin-api-token}' | base64 -d); \
@@ -1348,9 +1452,8 @@ kind-sso-toggle: check-kubectl ## Toggle SSO auth on/off in Kind (affects both f
 kind-status: check-kind ## Show all kind clusters and their port assignments
 	@echo "$(COLOR_BOLD)Kind Cluster Status$(COLOR_RESET)"
 	@echo ""
-	@echo "$(COLOR_BOLD)Current worktree:$(COLOR_RESET)"
-	@echo "  Slug:     $(CLUSTER_SLUG)"
-	@echo "  Cluster:  $(KIND_CLUSTER_NAME)"
+	@echo "$(COLOR_BOLD)Cluster:$(COLOR_RESET)"
+	@echo "  Name:     $(KIND_CLUSTER_NAME)"
 	@if [ -n "$(KIND_HOST)" ]; then echo "  Host:     $(KIND_HOST) (remote)"; else echo "  Host:     localhost"; fi
 	@echo "  NodePort: $(KIND_HTTP_PORT) (HTTP) / $(KIND_HTTPS_PORT) (HTTPS)"
 	@echo "  Forward:  $(KIND_FWD_FRONTEND_PORT) (frontend) / $(KIND_FWD_BACKEND_PORT) (backend) / $(KIND_FWD_KEYCLOAK_PORT) (keycloak)"
@@ -1385,14 +1488,34 @@ kind-setup-vertex: check-kubectl _kind-require-cluster ## Configure Vertex AI fo
 			./scripts/setup-vertex-kind.sh; \
 	fi
 
-kind-setup-openshell-cli: check-kubectl _kind-require-cluster ## Auto-discover tenant gateways and register openshell CLI access
+kind-setup-openshell-cli: check-kubectl _kind-require-cluster ## Auto-discover tenant gateways and register openshell CLI access (stop with: make kind-setup-openshell-cli-stop)
 	@NAMESPACES=$$(kubectl get pods --all-namespaces -l app.kubernetes.io/instance=openshell-gateway -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u); \
 	if [ -z "$$NAMESPACES" ]; then \
 		echo "$(COLOR_RED)✗$(COLOR_RESET) No openshell-gateway pods found in any namespace"; \
 		exit 1; \
 	fi; \
 	echo "$(COLOR_BLUE)▶$(COLOR_RESET) Found openshell-gateway in: $$NAMESPACES"; \
-	./scripts/setup-gateway-cli.sh $$NAMESPACES
+	PF_DIR=$(KIND_PF_DIR) GATEWAY_BASE_PORT=$(KIND_FWD_GATEWAY_BASE_PORT) ./scripts/setup-gateway-cli.sh $$NAMESPACES
+
+kind-setup-openshell-cli-stop: ## Stop background openshell gateway port-forwards
+	@STOPPED=0; \
+	for PID_FILE in $(KIND_PF_DIR)/kind-pf-openshell-*.pid; do \
+		[ -f "$$PID_FILE" ] || continue; \
+		SVC=$$(basename "$$PID_FILE" .pid | sed 's/^kind-pf-openshell-//'); \
+		PID=$$(cat "$$PID_FILE"); \
+		if ps -p "$$PID" >/dev/null 2>&1; then \
+			kill "$$PID" 2>/dev/null || true; \
+			echo "  Stopped openshell-gateway port-forward for $$SVC (PID $$PID)"; \
+			STOPPED=1; \
+		fi; \
+		rm -f "$$PID_FILE"; \
+		rm -f "$(KIND_PF_DIR)/kind-pf-openshell-$$SVC.log"; \
+	done; \
+	if [ "$$STOPPED" -eq 1 ]; then \
+		echo "$(COLOR_GREEN)✓$(COLOR_RESET) Openshell gateway port-forwarding stopped"; \
+	else \
+		echo "$(COLOR_YELLOW)No active openshell gateway port-forwards found$(COLOR_RESET)"; \
+	fi
 
 kind-clean: kind-down ## Alias for kind-down
 
@@ -1524,7 +1647,7 @@ _kind-require-cluster: ## Internal: Fail fast if kind cluster is not running
 	@$(if $(filter podman,$(CONTAINER_ENGINE)),KIND_EXPERIMENTAL_PROVIDER=podman) kind get clusters 2>/dev/null | grep -q '^$(KIND_CLUSTER_NAME)$$' || \
 		(echo "$(COLOR_RED)✗$(COLOR_RESET) No ambient Kind cluster found. Run 'make kind-up' first, or set KIND_CLUSTER_NAME to an existing cluster." && exit 1)
 
-KIND_CORE_IMAGES := $(RUNNER_IMAGE) $(RUNNER_OPENSHELL_IMAGE) $(API_SERVER_IMAGE) $(CONTROL_PLANE_IMAGE) $(AMBIENT_UI_IMAGE)
+KIND_CORE_IMAGES := $(RUNNER_OPENSHELL_IMAGE) $(API_SERVER_IMAGE) $(CONTROL_PLANE_IMAGE) $(AMBIENT_UI_IMAGE)
 KIND_MCP_IMAGES := $(MCP_IMAGE) $(GITHUB_MCP_IMAGE) $(JIRA_MCP_IMAGE) $(K8S_MCP_IMAGE) $(GOOGLE_MCP_IMAGE)
 ifeq ($(OPENSHELL_USE_GATEWAY),true)
 KIND_MCP_IMAGES :=
@@ -1533,8 +1656,8 @@ endif
 _kind-preload-runner: ## Internal: Pull runner image from Quay, retag, and load into kind cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Pre-loading runner image into kind ($(KIND_CLUSTER_NAME))..."
 	@_LOG=/tmp/runner-preload-$$$$.log; \
-	printf '  Pulling $(RUNNER_QUAY_IMAGE):latest '; \
-	$(CONTAINER_ENGINE) pull $(RUNNER_QUAY_IMAGE):latest >"$$_LOG" 2>&1 & \
+	printf '  Pulling $(RUNNER_QUAY_IMAGE):$(RUNNER_QUAY_TAG) '; \
+	$(CONTAINER_ENGINE) pull $(RUNNER_QUAY_IMAGE):$(RUNNER_QUAY_TAG) >"$$_LOG" 2>&1 & \
 	_PID=$$!; \
 	_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; \
 	while kill -0 $$_PID 2>/dev/null; do \
@@ -1551,7 +1674,7 @@ _kind-preload-runner: ## Internal: Pull runner image from Quay, retag, and load 
 		exit 1; \
 	fi; \
 	rm -f "$$_LOG"
-	@$(CONTAINER_ENGINE) tag $(RUNNER_QUAY_IMAGE):latest $(RUNNER_PRELOAD_REF)
+	@$(CONTAINER_ENGINE) tag $(RUNNER_QUAY_IMAGE):$(RUNNER_QUAY_TAG) $(RUNNER_PRELOAD_REF)
 	@printf '  Loading image into cluster '
 	@_LOG=/tmp/runner-load-$$$$.log; \
 	if [ "$(CONTAINER_ENGINE)" = "podman" ] || [ -n "$(KIND_HOST)" ]; then \
@@ -1582,17 +1705,27 @@ _kind-preload-runner: ## Internal: Pull runner image from Quay, retag, and load 
 
 _kind-load-images: ## Internal: Load images into kind cluster
 	@echo "$(COLOR_BLUE)▶$(COLOR_RESET) Loading images into kind ($(KIND_CLUSTER_NAME))..."
-	@for img in $(KIND_CORE_IMAGES) $(KIND_MCP_IMAGES); do \
-		echo "  Loading $$img -> $(KIND_IMAGE_PREFIX)$$img..."; \
-		$(CONTAINER_ENGINE) tag $$img $(KIND_IMAGE_PREFIX)$$img 2>/dev/null || true; \
-		if [ -n "$(KIND_HOST)" ] || [ "$(CONTAINER_ENGINE)" = "podman" ]; then \
-			$(CONTAINER_ENGINE) save $(KIND_IMAGE_PREFIX)$$img | \
-			$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
-			ctr --namespace=k8s.io images import -; \
-		else \
-			kind load docker-image $(KIND_IMAGE_PREFIX)$$img --name $(KIND_CLUSTER_NAME); \
-		fi; \
-	done
+	@_PIDS=""; _FAIL=0; \
+	for img in $(KIND_CORE_IMAGES) $(KIND_MCP_IMAGES); do \
+		( \
+			echo "  Loading $$img -> $(KIND_IMAGE_PREFIX)$$img..."; \
+			$(CONTAINER_ENGINE) tag $$img $(KIND_IMAGE_PREFIX)$$img 2>/dev/null || true; \
+			if [ -n "$(KIND_HOST)" ] || [ "$(CONTAINER_ENGINE)" = "podman" ]; then \
+				$(CONTAINER_ENGINE) save $(KIND_IMAGE_PREFIX)$$img | \
+				$(CONTAINER_ENGINE) exec -i $(KIND_CLUSTER_NAME)-control-plane \
+				ctr --namespace=k8s.io images import -; \
+			else \
+				kind load docker-image $(KIND_IMAGE_PREFIX)$$img --name $(KIND_CLUSTER_NAME); \
+			fi \
+		) & _PIDS="$$_PIDS $$!"; \
+	done; \
+	for _pid in $$_PIDS; do \
+		if ! wait $$_pid; then _FAIL=1; fi; \
+	done; \
+	if [ $$_FAIL -ne 0 ]; then \
+		echo "$(COLOR_RED)✗$(COLOR_RESET) One or more image loads failed"; \
+		exit 1; \
+	fi
 	@echo "$(COLOR_GREEN)✓$(COLOR_RESET) Images loaded"
 
 _restart-all: ## Internal: Restart all deployments
