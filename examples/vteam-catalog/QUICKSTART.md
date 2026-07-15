@@ -1,7 +1,10 @@
 # vTeam Catalog Manual Reload Quickstart
 
-Use this when you want to recreate the current vTeam Catalog lab environment
-from the manifests by hand.
+Use this to stand up the vTeam Catalog lab environment from the manifests by hand.
+The lab is **self-contained**: it runs against a clean/empty cluster and creates
+everything it needs (project, namespace, gateway, agents, providers) itself via
+`acpctl apply`. `make kind-up` only brings up the cluster and platform — it does
+**not** pre-create the `vteam-product-swarm` tenant.
 
 ## 0. Start From The Feature Worktree
 
@@ -33,6 +36,10 @@ Then create the cluster:
 ```bash
 make kind-up OPENSHELL_USE_GATEWAY=true
 ```
+
+This provisions the cluster, the platform, and the OpenShell gateway
+infrastructure. It does **not** create the `vteam-product-swarm` project or
+namespace — you create those in step 4 by applying the catalog.
 
 After it finishes, check the assigned ports:
 
@@ -85,7 +92,6 @@ In the first terminal, log in with the Makefile helper:
 
 ```bash
 make kind-acpctl-login
-export AMBIENT_PROJECT=vteam-product-swarm
 ```
 
 If you need to do the same steps manually, derive the backend port from
@@ -109,53 +115,19 @@ TOKEN=$(kubectl get secret test-user-token -n ambient-code \
   --token "$TOKEN"
 ```
 
-Quick check:
+Quick check that login works. The vTeam project does **not** exist yet — you
+create it in the next step:
 
 ```bash
-export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" get projects
 ```
 
-## 4. Optional Runtime Secrets
+## 4. Apply The vTeam Catalog Manifests
 
-Applying the catalog does not require provider secrets. Starting real sessions
-needs the provider backing secrets in namespace `vteam-product-swarm`:
-
-- `vertex-sa-key`
-- `github-creds`
-- `jira`
-
-If you want Vertex credentials from the repo workflow, run:
-
-```bash
-make kind-setup-vertex
-```
-
-For the other providers, add your own credentials as `kind: Credential`
-resources and apply them with `acpctl`. For example, to give the GitHub-backed
-agents (Amber, Parker, …) a token, create a file like
-[`examples/overlays/tenant-a/credential-github.yaml`](../overlays/tenant-a/credential-github.yaml):
-
-```yaml
-kind: Credential
-name: github-cred
-provider: github
-token: $GITHUB_PAT   # a GitHub Personal Access Token
-```
-
-```bash
-export AMBIENT_PROJECT=vteam-product-swarm
-"$ACPCTL" apply -f credential-github.yaml --project vteam-product-swarm
-```
-
-The control plane materializes the `github-creds` secret in the project
-namespace from this record. See the
-[Credentials concept guide](https://openshift-online.github.io/agent-control-plane/concepts/credentials/)
-for how credentials, role bindings, and runtime wiring fit together. Without a
-credential for a provider an agent declares, its sessions fail to start with
-`reading secret <provider>-creds ... not found`.
-
-## 5. Apply The Current vTeam Catalog Manifests
+This is the core lab step. Applying the catalog creates the `vteam-product-swarm`
+**project** record; the control plane then provisions the backing Kubernetes
+namespace and the OpenShell gateway from that record — no `kubectl create
+namespace` needed.
 
 ```bash
 export AMBIENT_PROJECT=vteam-product-swarm
@@ -164,22 +136,76 @@ export AMBIENT_PROJECT=vteam-product-swarm
   --project vteam-product-swarm
 ```
 
-Verify ACP records:
+Verify the ACP records (available immediately after apply):
 
 ```bash
-export AMBIENT_PROJECT=vteam-product-swarm
 "$ACPCTL" get project vteam-product-swarm
 "$ACPCTL" agent list --project vteam-product-swarm
 "$ACPCTL" provider list --project vteam-product-swarm
 ```
 
-Verify Kubernetes-side objects:
+Verify the Kubernetes-side objects. The namespace and gateway are created by the
+control plane reconciler, so they appear a few seconds after the apply — wait for
+them rather than expecting them immediately:
 
 ```bash
-kubectl get namespace vteam-product-swarm
+kubectl wait --for=jsonpath='{.status.phase}'=Active \
+  namespace/vteam-product-swarm --timeout=60s
 kubectl get all,configmap,secret,pvc,serviceaccount,role,rolebinding \
   -n vteam-product-swarm
+# The gateway StatefulSet is deployed on the next reconcile pass:
+kubectl rollout status statefulset/openshell-gateway \
+  -n vteam-product-swarm --timeout=120s
 ```
+
+## 5. Optional Runtime Secrets
+
+Applying the catalog does not require provider secrets. But starting real
+sessions does: at gateway setup the control plane reads each provider's backing
+Kubernetes Secret directly from the project namespace, so those Secrets must
+exist there. The catalog's providers declare these secret names:
+
+- `vertex-sa-key`
+- `github-creds`
+- `jira`
+
+Do **not** rely on `make kind-setup-vertex` — that target is scoped to the demo
+fleet tenants in `OPENSHELL_TENANTS`, not the catalog project.
+
+Vertex and GitHub each use a secret with a single `token` key, created directly
+in the `vteam-product-swarm` namespace (created in step 4):
+
+```bash
+# Vertex — token is the full contents of a GCP service-account JSON key
+kubectl create secret generic vertex-sa-key \
+  --namespace vteam-product-swarm \
+  --from-literal=token="$(cat /path/to/gcp-sa-key.json)"
+
+# GitHub — token is a Personal Access Token
+kubectl create secret generic github-creds \
+  --namespace vteam-product-swarm \
+  --from-literal=token="$GITHUB_PAT"
+```
+
+Jira (used only by Parker) needs more than a token — the `jira` provider passes
+its Secret keys straight through as environment variables, so the Secret must
+carry the base URL, account, and API token that the Atlassian MCP expects
+(`JIRA_URL`, `JIRA_USERNAME`, `JIRA_API_TOKEN`), matching the tenant example in
+[examples/README.md](../README.md):
+
+```bash
+kubectl create secret generic jira \
+  --namespace vteam-product-swarm \
+  --from-literal=JIRA_URL=https://your-org.atlassian.net \
+  --from-literal=JIRA_USERNAME="you@example.com" \
+  --from-literal=JIRA_API_TOKEN="$(cat ~/jira-token.txt)"
+```
+
+Only set up the providers whose agents you actually run. See the
+[Credentials concept guide](https://openshift-online.github.io/agent-control-plane/concepts/credentials/)
+for how provider secrets, credentials, and runtime wiring fit together. Without
+the backing secret/credential for a provider an agent declares, its sessions fail
+to start with `reading secret <provider>-creds ... not found`.
 
 ## 6. Troubleshooting
 
@@ -188,7 +214,7 @@ Common causes when ACP commands do not show the vTeam records:
 - `make kind-port-forward` is not running.
 - `acpctl` is logged into the wrong backend port.
 - The lab worktree cluster is not running.
-- The vTeam manifests have not been applied yet.
+- The vTeam manifests have not been applied yet (step 4).
 
 Useful reset commands:
 
@@ -203,12 +229,11 @@ current backend port from `make kind-status`.
 
 ## 7. Optional: Start A Work Packet Session
 
-Starting real sessions needs provider secrets and an OpenShell gateway for the
-`vteam-product-swarm` namespace. The default `OPENSHELL_TENANTS` includes
-`vteam-product-swarm`, so the namespace and gateway are provisioned
-automatically during `make kind-up`.
+Starting real sessions needs the provider secrets from step 5 and the OpenShell
+gateway. Both come from the catalog apply (step 4) plus your credentials — the
+gateway StatefulSet is deployed by the control plane once the namespace exists.
 
-After those runtime prerequisites are available, start Stella with the demo work
+Once those runtime prerequisites are available, start Stella with the demo work
 packet:
 
 ```bash

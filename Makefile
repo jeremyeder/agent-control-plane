@@ -114,7 +114,10 @@ GOOGLE_APPLICATION_CREDENTIALS ?= $(or $(shell echo $$GOOGLE_APPLICATION_CREDENT
 VERTEX_CRED ?= $(GOOGLE_APPLICATION_CREDENTIALS)
 
 # OpenShell Gateway Configuration (OPENSHELL_USE_GATEWAY=true by default)
-# Provisions tenant namespaces with an OpenShell gateway each.
+# Provisions the demo fleet tenant namespaces with an OpenShell gateway each.
+# Only tenants that have an examples/overlays/<ns>/ overlay are fully applied.
+# The vTeam catalog lab (examples/vteam-catalog/) is intentionally NOT provisioned
+# here — it is self-contained and applied by the user against a clean cluster.
 # Override with OPENSHELL_TENANTS="ns1 ns2" to change the set of tenant namespaces.
 # Skip acpctl apply for specific tenants: SKIP_TENANT_SETUP="tenant-c"
 OPENSHELL_USE_GATEWAY ?= true
@@ -1002,26 +1005,32 @@ kind-up: preflight-cluster build-cli ## Start kind cluster and deploy the platfo
 		sleep 2; \
 		TOKEN=$$(kubectl get secret test-user-token -n $(NAMESPACE) -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null); \
 		$$ACPCTL login --url "http://localhost:$${PF_PORT}" --token "$$TOKEN" >/dev/null 2>&1; \
+		FLEET_FAILED=""; \
 		for ns in $(OPENSHELL_TENANTS); do \
 			if echo " $(SKIP_TENANT_SETUP) " | grep -q " $$ns "; then \
 				echo "  $$ns: skipped (SKIP_TENANT_SETUP)"; \
 				continue; \
 			fi; \
+			[ -f "examples/overlays/$$ns/kustomization.yaml" ] || continue; \
 			if [ -f "$(VERTEX_CRED)" ]; then \
 				kubectl create secret generic vertex-sa-key \
 					--namespace="$$ns" \
 					"--from-literal=token=$$(cat '$(VERTEX_CRED)')" \
 					--dry-run=client -o yaml | kubectl apply -f - 2>/dev/null; \
 			fi; \
-			if [ -d "examples/overlays/$$ns" ]; then \
-				VERTEX_SA_KEY=$$(cat "$(VERTEX_CRED)" 2>/dev/null || echo "") \
-				$$ACPCTL apply -k "examples/overlays/$$ns/" --project "$$ns" && \
+			if VERTEX_SA_KEY=$$(cat "$(VERTEX_CRED)" 2>/dev/null || echo "") \
+				$$ACPCTL apply -k "examples/overlays/$$ns/" --project "$$ns"; then \
 				echo "  $$ns: applied"; \
 			else \
-				echo "  $$ns: no overlay directory — skipping fleet"; \
+				echo "$(COLOR_RED)✗$(COLOR_RESET) $$ns: apply failed"; \
+				FLEET_FAILED="$$FLEET_FAILED $$ns"; \
 			fi; \
 		done; \
 		kill $$PF_PID 2>/dev/null || true; \
+		if [ -n "$$FLEET_FAILED" ]; then \
+			echo "$(COLOR_RED)✗$(COLOR_RESET) Fleet provisioning failed for:$$FLEET_FAILED"; \
+			exit 1; \
+		fi; \
 	fi
 	@# Vertex AI setup if requested (non-gateway)
 	@if [ "$(OPENSHELL_USE_GATEWAY)" != "true" ]; then \

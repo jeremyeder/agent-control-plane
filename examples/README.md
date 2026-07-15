@@ -331,7 +331,7 @@ vteam-catalog/
 └── codebase-maintainers/    # Internal codebase maintenance team
 ```
 
-The `vteam-product-swarm` and `codebase-maintainers` namespaces are provisioned automatically during `make kind-up` (included in the default `OPENSHELL_TENANTS`). See the [vTeam Catalog README](vteam-catalog/README.md) for architecture details and the [QUICKSTART](vteam-catalog/QUICKSTART.md) for a step-by-step walkthrough.
+The vTeam lab is self-contained: applying a catalog creates the `Project`, and the control plane provisions its namespace and gateway from that record — so `make kind-up` does not pre-create these tenants (only the `tenant-a`/`tenant-b` demo fleet). See the [vTeam Catalog README](vteam-catalog/README.md) for architecture details and the [QUICKSTART](vteam-catalog/QUICKSTART.md) for a step-by-step walkthrough.
 
 ### Applying
 

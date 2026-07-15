@@ -24,9 +24,12 @@ ACP ships two catalog examples:
 The manifests live in
 [examples/vteam-catalog](https://github.com/openshift-online/agent-control-plane/tree/main/examples/vteam-catalog).
 
-For local Kind clusters, `make kind-up` includes `vteam-product-swarm` and
-`codebase-maintainers` in the default `OPENSHELL_TENANTS` list, so those
-namespaces are ready for the lab.
+The lab is self-contained and runs against a clean cluster: applying a catalog
+creates the `Project` record, and the control plane provisions the backing
+namespace and gateway from it (see [Gateway and namespace
+behavior](#gateway-and-namespace-behavior)). On a local Kind cluster, `make
+kind-up` only provisions the demo fleet (`tenant-a`, `tenant-b`); it does not
+pre-create the vTeam tenants — the apply step below does.
 
 ## Apply a catalog team
 
@@ -71,8 +74,10 @@ server_dns_names:
   - openshell-gateway.vteam-product-swarm.svc.cluster.local
 ```
 
-The control plane resolves the project namespace as `vteam-product-swarm` and
-creates the gateway Kubernetes resources there.
+When the `Project` record is applied, the control plane creates the namespace
+`vteam-product-swarm` (no `kubectl create namespace` needed) and then, on a
+subsequent reconcile pass, deploys the gateway Kubernetes resources there. Both
+are eventually consistent — they appear a few seconds after the apply.
 
 ## Verify
 
@@ -90,14 +95,20 @@ acpctl agent list --project codebase-maintainers
 acpctl provider list --project codebase-maintainers
 ```
 
-On a local Kind cluster, also check the project namespaces:
+On a local Kind cluster, also check the project namespaces. These are created by
+the control plane reconciler after the apply, so wait for them rather than
+expecting them immediately:
 
 ```bash
-kubectl get namespace vteam-product-swarm
-kubectl get statefulset openshell-gateway -n vteam-product-swarm
+kubectl wait --for=jsonpath='{.status.phase}'=Active \
+  namespace/vteam-product-swarm --timeout=60s
+kubectl rollout status statefulset/openshell-gateway \
+  -n vteam-product-swarm --timeout=120s
 
-kubectl get namespace codebase-maintainers
-kubectl get statefulset openshell-gateway -n codebase-maintainers
+kubectl wait --for=jsonpath='{.status.phase}'=Active \
+  namespace/codebase-maintainers --timeout=60s
+kubectl rollout status statefulset/openshell-gateway \
+  -n codebase-maintainers --timeout=120s
 ```
 
 For a hand-run local reload flow, use the

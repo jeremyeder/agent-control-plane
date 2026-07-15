@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install OpenShell gateway prerequisites into a Kind cluster (dual-tenant mode).
+# Install OpenShell gateway prerequisites into a Kind cluster (multi-tenant mode).
 # Called by `make kind-up OPENSHELL_USE_GATEWAY=true`.
 #
 # Provisions for each tenant in OPENSHELL_TENANTS (default: tenant-a tenant-b):
@@ -19,7 +19,7 @@ set -euo pipefail
 NAMESPACE="${NAMESPACE:-ambient-code}"
 AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-v0.5.1}"
 # Space-separated list of tenant namespaces to provision
-IFS=' ' read -ra TENANTS <<< "${OPENSHELL_TENANTS:-tenant-a tenant-b vteam-product-swarm codebase-maintainers}"
+IFS=' ' read -ra TENANTS <<< "${OPENSHELL_TENANTS:-tenant-a tenant-b}"
 
 echo "Setting up OpenShell gateway prerequisites (tenants: ${TENANTS[*]})..."
 
@@ -192,8 +192,11 @@ else
 fi
 echo "  Note: ambient-ui gateway mode is baked in at build time via --build-arg OPENSHELL_USE_GATEWAY=true"
 
-# Vertex credentials and tenant overlays (examples/overlays/<tenant>/) are
-# applied by `make kind-up` after this script finishes — see the
-# setup-vertex-provider.sh calls in the Makefile.
+# After this script finishes, `make kind-up` applies the fleet overlay for any
+# tenant that has one at examples/overlays/<tenant>/ (currently tenant-a, tenant-b).
+# The vTeam catalog lab (examples/vteam-catalog/) is NOT provisioned here — it is
+# self-contained: the user's `acpctl apply -k examples/vteam-catalog/...` creates the
+# project, and the control plane reconciler provisions the namespace + gateway from
+# that record. See examples/vteam-catalog/QUICKSTART.md.
 
 echo "OpenShell gateway setup complete (${TENANTS[*]})."

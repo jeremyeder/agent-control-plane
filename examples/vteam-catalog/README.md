@@ -70,9 +70,9 @@ The provider declarations reference these Kubernetes Secret names:
 - `github-creds`
 - `jira`
 
-Create those secrets in the project namespace before starting sessions that need
-the providers. Applying the catalog creates the ACP records; missing provider
-secrets become runtime issues when an agent session starts.
+Applying the catalog creates the project and its namespace; create these secrets
+in that namespace before starting sessions that need the providers. Missing
+provider secrets become runtime issues when an agent session starts.
 
 ## Codebase Maintainers
 
@@ -110,6 +110,6 @@ The provider declarations reference these Kubernetes Secret names:
 - `github-creds`
 - `runtime-kubeconfig`
 
-Create those secrets in the project namespace before starting sessions that need
-the providers. Applying the catalog creates the ACP records; missing provider
-secrets become runtime issues when an agent session starts.
+Applying the catalog creates the project and its namespace; create these secrets
+in that namespace before starting sessions that need the providers. Missing
+provider secrets become runtime issues when an agent session starts.
