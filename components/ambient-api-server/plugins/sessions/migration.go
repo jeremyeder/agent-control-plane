@@ -362,3 +362,15 @@ func schemaExpansionMigration() *gormigrate.Migration {
 		},
 	}
 }
+
+func stopOnRunFinishedMigration() *gormigrate.Migration {
+	return &gormigrate.Migration{
+		ID: "202607150005",
+		Migrate: func(tx *gorm.DB) error {
+			return tx.Exec(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS stop_on_run_finished BOOLEAN`).Error
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return tx.Exec(`ALTER TABLE sessions DROP COLUMN IF EXISTS stop_on_run_finished`).Error
+		},
+	}
+}
