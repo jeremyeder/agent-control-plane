@@ -19,8 +19,8 @@ When listing all gateways (`acpctl get gateways`), the output SHALL display a ta
 | Column | Width | Content |
 |--------|-------|---------|
 | NAME | 24 | `gateway.name` |
-| IMAGE | 50 | `gateway.image` |
-| DNS NAMES | 50 | Comma-separated `gateway.serverDnsNames` |
+| VERSION | 20 | Image tag extracted from `gateway.image` (everything after the last `:`) |
+| ADDRESS | 64 | `gateway.routeAddress` when a route is configured and ready; `"Not ready..."` when a route is configured but `routeAddress` is empty; comma-separated `gateway.serverDnsNames` when no route is configured |
 | AGE | 10 | Relative time since `created_at` |
 
 When retrieving a single gateway by name or ID (`acpctl get gateway <name>`), the output SHALL display the table row followed by a connection info block.
@@ -31,7 +31,7 @@ The command SHALL support JSON output via the standard `--output json` flag.
 
 - GIVEN gateways "alpha" and "beta" exist
 - WHEN the user runs `acpctl get gateways`
-- THEN a table renders with NAME, IMAGE, DNS NAMES, and AGE columns
+- THEN a table renders with NAME, VERSION, ADDRESS, and AGE columns
 - AND both gateways appear as rows
 
 #### Scenario: Get a single gateway by name
@@ -57,26 +57,30 @@ The command SHALL support JSON output via the standard `--output json` flag.
 
 When a single gateway is retrieved, the CLI SHALL print a connection info block after the table containing:
 
+- **Route**: The external route address (only if `routeAddress` is non-empty)
 - **Cluster DNS**: The in-cluster service address (`openshell-gateway.<namespace>.svc.cluster.local:8080`)
 - **Server SANs**: The gateway's configured DNS names (only if `serverDnsNames` is non-empty)
-- **Setup hint**: The `acpctl gateway setup-cli <name> --gateway-url <url>` command to configure local CLI access
+- **Setup hint**: When a route address is available, show `acpctl gateway setup-cli <name>`. When no route address is available, show `acpctl gateway setup-cli <name> --kubectl`.
 
 The namespace SHALL be derived from the gateway's `projectID`, lowercased.
 
-#### Scenario: Connection info with DNS names
+#### Scenario: Connection info with route address
 
-- GIVEN gateway "alpha" has `serverDnsNames: ["gw.example.com"]` and belongs to project "PLATFORM"
+- GIVEN gateway "alpha" has `routeAddress: "https://openshell-gateway-platform.acpgw.apps.example.com"`, `serverDnsNames: ["gw.example.com"]`, and belongs to project "PLATFORM"
 - WHEN the user runs `acpctl get gateway alpha`
 - THEN the connection info shows:
+  - Route: `https://openshell-gateway-platform.acpgw.apps.example.com`
   - Cluster DNS: `openshell-gateway.platform.svc.cluster.local:8080`
   - Server SANs: `gw.example.com`
-  - Setup hint: `acpctl gateway setup-cli alpha --gateway-url <url>`
+  - Setup hint: `acpctl gateway setup-cli alpha`
 
-#### Scenario: Connection info without DNS names
+#### Scenario: Connection info without route address
 
-- GIVEN gateway "beta" has an empty `serverDnsNames` list
+- GIVEN gateway "beta" has no `routeAddress` and an empty `serverDnsNames` list
 - WHEN the user runs `acpctl get gateway beta`
-- THEN the Server SANs line is omitted from the connection info
+- THEN the Route line is omitted from the connection info
+- AND the Server SANs line is omitted
+- AND the setup hint shows `acpctl gateway setup-cli beta --kubectl`
 
 ### Requirement: Delete Gateway
 
@@ -107,36 +111,51 @@ The `acpctl gateway setup-cli [name]` command SHALL configure local openshell CL
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `--gateway-url` | Yes | — | Gateway URL (e.g. `https://gateway.example.com:8080`) |
+| `--gateway-url` | No | Gateway's route address | Gateway URL (e.g. `https://gateway.example.com:8080`). If omitted, uses the gateway's `routeAddress` from the API server. |
+| `--kubectl` | No | `false` | Fall back to `kubectl port-forward` and cert extraction when no route address is available |
 | `--project` | No | Configured project | Project/namespace to look up the gateway in |
 | `--print` | No | `false` | Print openshell commands instead of running them |
 
 The API-side gateway name defaults to `openshell-gateway` if the positional `[name]` argument is omitted. The local openshell registration is named `<project>-<gateway-name>`.
 
+#### URL Resolution
+
+When `--gateway-url` is omitted, the command resolves the gateway URL as follows:
+
+1. If the gateway has a `routeAddress` (populated by the control plane when a GRPCRoute is created), use it
+2. If `--kubectl` is specified, fall back to `kubectl port-forward` (see kubectl mode below)
+3. Otherwise, fail with an error instructing the user to use `--kubectl` or `--gateway-url`
+
 #### Modes of Operation
 
-The command operates in one of three modes based on the current state:
+The command has two modes based on whether cluster access is assumed:
 
-**Non-interactive new registration** (OIDC gateway + acpctl credentials available):
+**Route-address mode** (default — no cluster access required):
 
-1. Fetch the gateway resource from the API server
-2. Write `metadata.json` to `~/.config/openshell/gateways/<local-name>/` with gateway endpoint, auth mode, and OIDC configuration
-3. Write `oidc_token.json` with the user's acpctl access token and refresh token
-4. Attempt to fetch mTLS certificates from the `openshell-client-tls` K8s secret in the gateway's namespace via `kubectl`, writing `ca.crt`, `tls.crt`, and `tls.key` to `~/.config/openshell/gateways/<local-name>/mtls/`
-5. If mTLS fetch fails, warn the user to ensure kubectl access or manually provision certs (non-fatal)
-6. Verify connectivity via `openshell status -g <local-name>` — if the gateway is unreachable, clean up the written config and fail with an error
+The gateway URL is resolved from the API server's `routeAddress` field or provided via `--gateway-url`. The command does NOT interact with the Kubernetes cluster — TLS verification relies on the system trust store. On CRC, this means the user must install the CRC CA certificates before running this command (see README).
 
-**Non-interactive re-authentication** (gateway already registered + acpctl credentials available):
+- Non-interactive new registration (OIDC gateway + acpctl credentials):
+  1. Fetch the gateway resource from the API server
+  2. Write `metadata.json` to `~/.config/openshell/gateways/<local-name>/` with gateway endpoint, auth mode, and OIDC configuration
+  3. Write `oidc_token.json` with the user's acpctl access token and refresh token
+  4. Verify connectivity via `openshell status -g <local-name>` — if unreachable, clean up and fail
 
-1. Refresh the `oidc_token.json` with current acpctl credentials
-2. Attempt to refresh mTLS certificates (non-fatal on failure)
-3. Verify connectivity via `openshell status -g <local-name>`
+- Non-interactive re-authentication (gateway already registered + acpctl credentials):
+  1. Refresh `oidc_token.json` with current acpctl credentials
+  2. Verify connectivity via `openshell status -g <local-name>`
 
-**Interactive fallback** (no acpctl credentials OR non-OIDC gateway):
+- Interactive fallback (no acpctl credentials OR non-OIDC gateway):
+  1. Delegate to `openshell gateway add` or `openshell gateway login`
+  2. Verify connectivity via `openshell status -g <local-name>`
 
-1. For new registrations: delegate to `openshell gateway add` with appropriate flags
-2. For re-authentication: delegate to `openshell gateway login`
-3. Verify connectivity via `openshell status -g <local-name>`
+**Kubectl mode** (`--kubectl` — requires cluster access):
+
+Used when no route address is available (e.g., Kind clusters). The command starts a `kubectl port-forward` to the gateway service and fetches mTLS certificates from the cluster.
+
+1. Start `kubectl port-forward` to `svc/openshell-gateway` in the gateway's namespace
+2. Fetch mTLS certificates from the `openshell-client-tls` K8s secret, writing `ca.crt`, `tls.crt`, and `tls.key` to `~/.config/openshell/gateways/<local-name>/mtls/`
+3. If mTLS fetch fails, warn the user (non-fatal)
+4. Proceed with registration/re-authentication as in route-address mode, using `https://localhost:<port>` with `--gateway-insecure`
 
 #### Connectivity Validation
 

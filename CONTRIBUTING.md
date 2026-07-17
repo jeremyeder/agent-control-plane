@@ -493,6 +493,104 @@ kind delete cluster --name ambient-code
 make kind-up
 ```
 
+## OpenShift Local (CRC) Development
+
+For testing OpenShift-specific features like Routes, you can use [CRC (CodeReady Containers / OpenShift Local)](https://developers.redhat.com/products/openshift-local/overview).
+
+### Prerequisites
+
+```bash
+# Install CRC (Fedora/RHEL)
+sudo dnf install crc
+
+# macOS
+brew install --cask red-hat-openshift-local
+
+# Start CRC (first run downloads the VM image)
+crc setup
+crc start
+
+# Configure shell and login
+eval $(crc oc-env)
+oc login -u kubeadmin https://api.crc.testing:6443
+```
+
+### Deploy to CRC
+
+```bash
+make crc-up              # Build, deploy, and configure ACP on CRC
+make crc-reload-images   # Rebuild and push changed images (like kind-rebuild)
+make crc-reload-component CRC_COMPONENT=ambient-api-server  # Reload single component
+make crc-down            # Remove ACP from CRC (leaves CRC running)
+```
+
+### Trusting the CRC CA Certificates
+
+CRC uses self-signed CAs for TLS. After `make crc-up`, download both CA certificates and install them into your system trust store. This is only needed on CRC — production clusters use a real CA whose certs are already trusted.
+
+Two CAs are required:
+
+- **Gateway CA** (`acpgw-ca`) — for `*.acpgw.apps-crc.testing` (openshell gateway connections via Gateway API)
+- **CRC router CA** (`router-ca`) — for `*.apps-crc.testing` (Keycloak, API server, UI)
+
+```bash
+# Download both CAs into a single bundle
+oc get secret acpgw-ca -n openshift-ingress -o jsonpath='{.data.ca\.crt}' | base64 -d > crc-ca-bundle.crt
+oc get secret router-ca -n openshift-ingress-operator -o jsonpath='{.data.tls\.crt}' | base64 -d >> crc-ca-bundle.crt
+```
+
+**Linux (Fedora/RHEL):**
+
+```bash
+sudo cp crc-ca-bundle.crt /etc/pki/ca-trust/source/anchors/crc-ca-bundle.crt
+sudo update-ca-trust
+```
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo cp crc-ca-bundle.crt /usr/local/share/ca-certificates/crc-ca-bundle.crt
+sudo update-ca-certificates
+```
+
+**macOS:**
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain crc-ca-bundle.crt
+```
+
+After installing the bundle, HTTPS connections to `*.apps-crc.testing` and `*.acpgw.apps-crc.testing` will work without TLS verification flags.
+
+### Running E2E Tests on CRC
+
+```bash
+# Route exposure tests (requires ACP deployed on CRC)
+./tests/e2e/route-e2e-test.sh
+
+# With skip-cleanup for debugging
+./tests/e2e/route-e2e-test.sh --skip-cleanup
+```
+
+### CRC Troubleshooting
+
+**Resource starvation (pods in CrashLoopBackOff):**
+
+```bash
+# Increase CRC memory (default 9216 MiB may not be enough)
+crc stop
+crc config set memory 14336
+crc start
+```
+
+**Image pull errors (ImagePullBackOff):**
+
+Images must be pushed to the CRC internal registry. Use `make crc-reload-images` instead of just building locally.
+
+**SCC (Security Context Constraint) errors:**
+
+OpenShift's `restricted` SCC blocks containers that run as a fixed UID. Use Red Hat base images (e.g., `registry.redhat.io/rhel10/postgresql-16:10.1`) that support arbitrary UIDs.
+
 ### Application Issues
 
 **Pods not starting:**

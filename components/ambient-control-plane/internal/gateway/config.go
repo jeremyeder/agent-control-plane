@@ -15,9 +15,20 @@ type OidcConfig struct {
 	ScopesClaim string `yaml:"scopes_claim" json:"scopes_claim,omitempty"`
 }
 
+type RouteConfig struct {
+	Host string `yaml:"host" json:"host,omitempty"`
+}
+
 type GatewayConfig struct {
-	Image          string      `yaml:"image"`
-	ServerDnsNames []string    `yaml:"serverDnsNames"`
-	Config         string      `yaml:"config"`
-	Oidc           *OidcConfig `yaml:"oidc,omitempty"`
+	Image          string       `yaml:"image"`
+	ServerDnsNames []string     `yaml:"serverDnsNames"`
+	Config         string       `yaml:"config"`
+	Oidc           *OidcConfig  `yaml:"oidc,omitempty"`
+	Route          *RouteConfig `yaml:"route,omitempty"`
+}
+
+type ReconcileOpts struct {
+	IsOpenShift    bool
+	HasCertManager bool
+	TrustedCAData  string // PEM CA bundle from gateway-trusted-ca ConfigMap; empty = no injection
 }
