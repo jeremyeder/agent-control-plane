@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 
 	"github.com/gorilla/mux"
@@ -19,6 +20,65 @@ import (
 )
 
 var validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+
+var DefaultGatewayImage = gatewayImageFromEnv()
+
+func gatewayImageFromEnv() string {
+	if v := os.Getenv("GATEWAY_IMAGE"); v != "" {
+		return v
+	}
+	return "ghcr.io/nvidia/openshell/gateway:0.0.83"
+}
+
+var DefaultOIDCIssuerURL = oidcIssuerURLFromEnv()
+
+func oidcIssuerURLFromEnv() string {
+	return os.Getenv("OIDC_ISSUER_URL")
+}
+
+func applyGatewayDefaults(gw *Gateway, projectID string) {
+	if gw.Name == "" {
+		gw.Name = "openshell-gateway"
+	}
+	if gw.Image == nil || *gw.Image == "" {
+		img := DefaultGatewayImage
+		gw.Image = &img
+	}
+	if gw.ServerDnsNames == nil {
+		dnsNames := []string{gw.Name + "." + projectID + ".svc.cluster.local"}
+		raw, _ := json.Marshal(dnsNames)
+		s := string(raw)
+		gw.ServerDnsNames = &s
+	}
+	if gw.Oidc == nil && DefaultOIDCIssuerURL != "" {
+		oidcDefaults := map[string]interface{}{
+			"issuer":      DefaultOIDCIssuerURL,
+			"audience":    "openshell-cli",
+			"roles_claim": "realm_access.roles",
+			"admin_role":  "openshell-admin",
+			"user_role":   "openshell-user",
+		}
+		raw, _ := json.Marshal(oidcDefaults)
+		s := string(raw)
+		gw.Oidc = &s
+	}
+	if gw.Route == nil {
+		routeDefault := map[string]interface{}{}
+		raw, _ := json.Marshal(routeDefault)
+		s := string(raw)
+		gw.Route = &s
+	}
+	if gw.Labels == nil {
+		labelsDefault := map[string]string{
+			"purpose": "openshell",
+			"env":     "dev",
+			"auth":    "oidc",
+		}
+		raw, _ := json.Marshal(labelsDefault)
+		s := string(raw)
+		gw.Labels = &s
+	}
+}
 
 var _ handlers.RestHandler = gatewayHandler{}
 
@@ -47,11 +107,15 @@ func (h gatewayHandler) Create(w http.ResponseWriter, r *http.Request) {
 			if !validIDPattern.MatchString(projectID) {
 				return nil, errors.Validation("invalid project id")
 			}
-			if err := gateway.CheckEditorTier(ctx, projectID); err != nil {
+			if err := gateway.CheckAdminTier(ctx, projectID); err != nil {
 				return nil, err
 			}
 			gatewayModel := ConvertGateway(gw)
 			gatewayModel.ProjectId = projectID
+			applyGatewayDefaults(gatewayModel, projectID)
+			if gatewayModel.Name == "" {
+				return nil, errors.Validation("gateway name is required")
+			}
 			gatewayModel, svcErr := h.gateway.Create(ctx, gatewayModel)
 			if svcErr != nil {
 				return nil, svcErr
@@ -114,10 +178,20 @@ func (h gatewayHandler) Patch(w http.ResponseWriter, r *http.Request) {
 				found.Config = patch.Config
 			}
 			if patch.Labels != nil {
-				found.Labels = patch.Labels
+				raw, merr := json.Marshal(patch.Labels)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal labels: %v", merr)
+				}
+				s := string(raw)
+				found.Labels = &s
 			}
 			if patch.Annotations != nil {
-				found.Annotations = patch.Annotations
+				raw, merr := json.Marshal(patch.Annotations)
+				if merr != nil {
+					return nil, errors.GeneralError("failed to marshal annotations: %v", merr)
+				}
+				s := string(raw)
+				found.Annotations = &s
 			}
 			if patch.Oidc != nil {
 				raw, merr := json.Marshal(patch.Oidc)
@@ -239,7 +313,7 @@ func (h gatewayHandler) Delete(w http.ResponseWriter, r *http.Request) {
 				return nil, errors.Validation("invalid project or gateway id")
 			}
 			ctx := r.Context()
-			if err := gateway.CheckEditorTier(ctx, projectID); err != nil {
+			if err := gateway.CheckAdminTier(ctx, projectID); err != nil {
 				return nil, err
 			}
 			gw, svcErr := h.gateway.Get(ctx, gatewayID)

@@ -41,6 +41,19 @@ func ConvertGateway(gw openapi.Gateway) *Gateway {
 		}
 	}
 
+	if gw.Labels != nil {
+		if raw, err := json.Marshal(gw.Labels); err == nil {
+			s := string(raw)
+			c.Labels = &s
+		}
+	}
+	if gw.Annotations != nil {
+		if raw, err := json.Marshal(gw.Annotations); err == nil {
+			s := string(raw)
+			c.Annotations = &s
+		}
+	}
+
 	if gw.CreatedAt != nil {
 		c.CreatedAt = *gw.CreatedAt
 		c.UpdatedAt = *gw.UpdatedAt
@@ -61,6 +74,19 @@ func PresentGateway(gw *Gateway) openapi.Gateway {
 		ProjectId: gw.ProjectId,
 		Image:     gw.Image,
 		Config:    gw.Config,
+	}
+
+	if gw.Labels != nil {
+		var labels map[string]string
+		if err := json.Unmarshal([]byte(*gw.Labels), &labels); err == nil {
+			result.Labels = &labels
+		}
+	}
+	if gw.Annotations != nil {
+		var annotations map[string]string
+		if err := json.Unmarshal([]byte(*gw.Annotations), &annotations); err == nil {
+			result.Annotations = &annotations
+		}
 	}
 
 	if gw.ServerDnsNames != nil {
