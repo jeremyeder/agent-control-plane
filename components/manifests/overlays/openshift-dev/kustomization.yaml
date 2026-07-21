@@ -22,3 +22,9 @@ patches:
     kind: Deployment
     name: ambient-api-server
     version: v1
+- path: ambient-api-server-route.yaml
+  target:
+    group: route.openshift.io
+    kind: Route
+    name: ambient-api-server
+    version: v1
