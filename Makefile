@@ -1493,12 +1493,11 @@ kind-status: check-kind ## Show all kind clusters and their port assignments
 	@if [ -n "$(KIND_HOST)" ]; then echo "  Host:     $(KIND_HOST) (remote)"; else echo "  Host:     localhost"; fi
 	@echo "  NodePort: $(KIND_HTTP_PORT) (HTTP) / $(KIND_HTTPS_PORT) (HTTPS)"
 	@echo "  Forward:  $(KIND_FWD_FRONTEND_PORT) (frontend) / $(KIND_FWD_BACKEND_PORT) (backend) / $(KIND_FWD_KEYCLOAK_PORT) (keycloak)"
-	@GW_LINE=""; OFFSET=0; \
+	@GW_LINE=""; \
 	for NS in $(OPENSHELL_TENANTS); do \
-		PORT=$$(($(KIND_FWD_GATEWAY_BASE_PORT) + $$OFFSET)); \
+		PORT=$$(OPENSHELL_TENANTS="$(OPENSHELL_TENANTS)" KIND_FWD_GATEWAY_BASE_PORT=$(KIND_FWD_GATEWAY_BASE_PORT) ./scripts/lib/gateway-ports.sh port-for "$$NS"); \
 		if [ -n "$$GW_LINE" ]; then GW_LINE="$$GW_LINE / "; fi; \
 		GW_LINE="$$GW_LINE$$PORT ($$NS)"; \
-		OFFSET=$$(($$OFFSET + 1)); \
 	done; \
 	if [ -n "$$GW_LINE" ]; then echo "  Gateways: $$GW_LINE"; fi
 	@echo ""
