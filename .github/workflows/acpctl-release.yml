@@ -23,6 +23,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: components/ambient-cli/go.mod
+          # Module lives in a subdir; point the dependency cache at its go.sum
+          # (repo root has none).
+          cache-dependency-path: components/ambient-cli/go.sum
 
       # Install the OSS GoReleaser binary directly (pinned) rather than the
       # third-party goreleaser/goreleaser-action, to minimize supply-chain surface.
