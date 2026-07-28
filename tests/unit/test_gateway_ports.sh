@@ -19,12 +19,18 @@ fail() { echo -e "  ${RED}\xE2\x9C\x97${NC} $1"; FAILED=$((FAILED + 1)); }
 # assert_port <expected> <ns> [env assignments...]
 assert_port() {
   local expected="$1" ns="$2"; shift 2
-  local got
-  got=$(env "$@" bash "$LIB" port-for "$ns" 2>/dev/null)
-  if [ "$got" = "$expected" ]; then
+  local got stderr_file
+  stderr_file=$(mktemp)
+  got=$(env "$@" bash "$LIB" port-for "$ns" 2>"$stderr_file")
+  local stderr_content
+  stderr_content=$(cat "$stderr_file")
+  rm -f "$stderr_file"
+  if [ "$got" = "$expected" ] && [ -z "$stderr_content" ]; then
     pass "port-for $ns ($*) = $expected"
-  else
+  elif [ "$got" != "$expected" ]; then
     fail "port-for $ns ($*): expected '$expected', got '$got'"
+  else
+    fail "port-for $ns ($*): unexpected stderr: $stderr_content"
   fi
 }
 
