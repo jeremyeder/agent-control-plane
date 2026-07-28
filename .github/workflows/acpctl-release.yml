@@ -1,0 +1,45 @@
+name: acpctl release
+
+# Cuts an acpctl release when a semver tag like `v0.1.0` is pushed:
+# GoReleaser cross-compiles binaries, publishes a GitHub Release, and updates the
+# Homebrew formula in the tap. Triggered by tag push only (never
+# pull_request_target), per repo CI/CD conventions. See components/ambient-cli/RELEASING.md.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create the GitHub Release via GITHUB_TOKEN
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags for GoReleaser
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: components/ambient-cli/go.mod
+
+      # Install the OSS GoReleaser binary directly (pinned) rather than the
+      # third-party goreleaser/goreleaser-action, to minimize supply-chain surface.
+      # Keep this version in sync with the one used for local dry-runs (RELEASING.md).
+      - name: Install GoReleaser (OSS)
+        run: go install github.com/goreleaser/goreleaser/v2@v2.17.1
+
+      - name: Run GoReleaser
+        # Run from the repo root so git-tag context is visible; point at the
+        # component config via --config.
+        run: goreleaser release --clean --config components/ambient-cli/.goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fork validation sets the repo variable HOMEBREW_TAP_OWNER=jeremyeder;
+          # upstream leaves it unset and it falls back to openshift-online.
+          HOMEBREW_TAP_OWNER: ${{ vars.HOMEBREW_TAP_OWNER || 'openshift-online' }}
+          # Token with write access to the <owner>/homebrew-tap repo. Fork uses a
+          # fine-scoped PAT; upstream should use a GitHub App token
+          # (actions/create-github-app-token) per CLAUDE.md.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
