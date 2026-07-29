@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACP Constitution — Gap Analysis &amp; Diff</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --border:#d1d9e0;
+    --canvas-subtle:#f6f8fa;
+    --add-bg:#e6ffec; --add-border:#a0e6b0; --add-fg:#0a5c2b; --add-marker:#116329;
+    --del-bg:#ffebe9; --del-border:#f0b6b2; --del-fg:#82071e; --del-marker:#a40e26;
+    --hunk-bg:#ddf4ff; --hunk-fg:#0550ae;
+    --green-fg:#1a7f37; --green-bg:#dafbe1; --green-br:#4ac26b;
+    --amber-fg:#7d4e00; --amber-bg:#fff8c5; --amber-br:#d4a72c;
+    --red-fg:#cf222e;  --red-bg:#ffebe9;  --red-br:#f0b6b2;
+    --blue-fg:#0969da;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#3d444d;
+      --canvas-subtle:#151b23;
+      --add-bg:#12261e; --add-border:#2ea04366; --add-fg:#3fb950; --add-marker:#3fb950;
+      --del-bg:#25171c; --del-border:#f8514966; --del-fg:#f85149; --del-marker:#f85149;
+      --hunk-bg:#121d2f; --hunk-fg:#4493f8;
+      --green-fg:#3fb950; --green-bg:#12261e; --green-br:#2ea04366;
+      --amber-fg:#d29922; --amber-bg:#272115; --amber-br:#bb800966;
+      --red-fg:#f85149;  --red-bg:#25171c;  --red-br:#f8514966;
+      --blue-fg:#4493f8;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.55;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:32px 24px 80px}
+  h1{font-size:26px; margin:0 0 4px; letter-spacing:-0.01em}
+  h2{font-size:19px; margin:44px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--border)}
+  .sub{color:var(--muted); margin:0 0 6px}
+  .meta{color:var(--muted); font-size:13px; margin-bottom:20px}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; font-size:12.5px}
+  a{color:var(--blue-fg); text-decoration:none} a:hover{text-decoration:underline}
+
+  /* legend */
+  .legend{display:flex; flex-wrap:wrap; gap:10px; margin:16px 0 8px}
+  .chip{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:3px 10px;
+    border-radius:999px; border:1px solid var(--border)}
+  .dot{width:9px; height:9px; border-radius:50%}
+
+  /* stat tiles */
+  .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0 6px}
+  @media(max-width:720px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{border:1px solid var(--border); border-radius:10px; padding:14px 16px; background:var(--canvas-subtle)}
+  .tile .n{font-size:30px; font-weight:700; line-height:1}
+  .tile .l{font-size:12.5px; color:var(--muted); margin-top:6px; text-transform:uppercase; letter-spacing:.04em}
+  .tile.g .n{color:var(--green-fg)} .tile.a .n{color:var(--amber-fg)} .tile.r .n{color:var(--red-fg)}
+
+  /* table */
+  table{border-collapse:collapse; width:100%; margin-top:8px; font-size:13.5px}
+  th,td{border:1px solid var(--border); padding:9px 11px; vertical-align:top; text-align:left}
+  th{background:var(--canvas-subtle); font-weight:600}
+  td.pnum{font-weight:700; text-align:center; white-space:nowrap; color:var(--muted)}
+  tr.row-g{background:color-mix(in srgb,var(--green-bg) 40%, transparent)}
+  tr.row-a{background:color-mix(in srgb,var(--amber-bg) 45%, transparent)}
+  tr.row-r{background:color-mix(in srgb,var(--red-bg) 45%, transparent)}
+
+  .badge{display:inline-block; font-size:11.5px; font-weight:700; padding:2px 9px; border-radius:999px; white-space:nowrap}
+  .b-g{color:var(--green-fg); background:var(--green-bg); border:1px solid var(--green-br)}
+  .b-a{color:var(--amber-fg); background:var(--amber-bg); border:1px solid var(--amber-br)}
+  .b-r{color:var(--red-fg);  background:var(--red-bg);  border:1px solid var(--red-br)}
+  .nature{font-size:12px}
+  .tag-doc{color:var(--blue-fg); font-weight:600}
+
+  /* diff blocks */
+  .diff{border:1px solid var(--border); border-radius:8px; overflow:hidden; margin:14px 0}
+  .diff .fname{background:var(--canvas-subtle); border-bottom:1px solid var(--border);
+    padding:8px 12px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px}
+  .diff .fname .pill{font-size:11px; font-weight:700; color:#fff; background:var(--muted); border-radius:5px; padding:1px 7px}
+  pre.code{margin:0; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5}
+  .ln{display:block; padding:1px 12px 1px 8px; white-space:pre-wrap; border-left:3px solid transparent}
+  .ln.h{background:var(--hunk-bg); color:var(--hunk-fg)}
+  .ln.a{background:var(--add-bg); color:var(--add-fg); border-left-color:var(--add-border)}
+  .ln.a .m{color:var(--add-marker); font-weight:700}
+  .ln.d{background:var(--del-bg); color:var(--del-fg); border-left-color:var(--del-border)}
+  .ln.d .m{color:var(--del-marker); font-weight:700}
+  .ln.ctx{color:var(--muted)}
+  .m{display:inline-block; width:1ch; user-select:none}
+  .note{background:var(--canvas-subtle); border:1px solid var(--border); border-left:4px solid var(--blue-fg);
+    border-radius:6px; padding:12px 14px; margin:14px 0; font-size:13.5px}
+  .footer{margin-top:40px; color:var(--muted); font-size:12.5px; border-top:1px solid var(--border); padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>ACP Constitution — Gap Analysis &amp; Diff</h1>
+  <p class="sub">Agent Control Plane audited against the platform constitution, then redrafted to match reality.</p>
+  <p class="meta">Generated 2026-07-29 · source: <code>ambient-code/platform</code> constitution v1.1.0 → ACP draft v2.0.0 · evidence: 4-agent codebase audit</p>
+
+  <div class="note">
+    <strong>Read this first.</strong> Most “gaps” are the <em>constitution</em> being stale relative to a
+    deliberately-evolved architecture — not ACP failing its own bar. The <span class="tag-doc">📜 blue tag</span>
+    marks principles where the <strong>document</strong> is out of date; the others are where <strong>code</strong> hasn’t caught up.
+  </div>
+
+  <div class="tiles">
+    <div class="tile g"><div class="n">2</div><div class="l">Aligned</div></div>
+    <div class="tile a"><div class="n">5</div><div class="l">Partial</div></div>
+    <div class="tile r"><div class="n">3</div><div class="l">Gap</div></div>
+    <div class="tile"><div class="n">10</div><div class="l">Principles</div></div>
+  </div>
+
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:var(--green-br)"></span>ALIGNED — met &amp; enforced</span>
+    <span class="chip"><span class="dot" style="background:var(--amber-br)"></span>PARTIAL — met in part</span>
+    <span class="chip"><span class="dot" style="background:var(--red-br)"></span>GAP — unmet / unbuilt</span>
+    <span class="chip"><span class="tag-doc">📜</span> constitution behind ACP</span>
+  </div>
+
+  <h2>1 · Gap analysis</h2>
+  <table>
+    <thead>
+      <tr><th class="pnum">#</th><th>Principle</th><th>Constitution requires</th><th>ACP reality (evidence)</th><th>Verdict</th><th>Delta</th></tr>
+    </thead>
+    <tbody>
+      <tr class="row-r">
+        <td class="pnum">I</td>
+        <td>Kubernetes-Native Architecture</td>
+        <td>CRDs as domain objects (<code>AgenticSession</code>, <code>ProjectSettings</code>, <code>RFEWorkflow</code>) reconciled by operators</td>
+        <td><strong>PostgreSQL is source of truth</strong>; control plane reconciles via <strong>gRPC watch streams</strong>. <code>RFEWorkflow</code> gone; <code>AgenticSession</code> vestigial (RBAC only). K8s = execution substrate.</td>
+        <td><span class="badge b-r">GAP</span></td>
+        <td class="nature"><span class="tag-doc">📜</span> arch evolved</td>
+      </tr>
+      <tr class="row-a">
+        <td class="pnum">II</td>
+        <td>Security &amp; Multi-Tenancy First</td>
+        <td>User-token K8s passthrough (<code>GetK8sClientsForRequest</code>), redaction, isolation, hardened containers</td>
+        <td><code>GetK8sClientsForRequest</code> = <strong>0 matches</strong> → OIDC/SSO + Postgres RBAC + backend SA. Strong namespace isolation. Redaction only in runner. <strong>OpenShell waives hardening</strong> (<code>runAsUser:0</code>, adds caps).</td>
+        <td><span class="badge b-a">PARTIAL</span></td>
+        <td class="nature"><span class="tag-doc">📜</span> + real gaps</td>
+      </tr>
+      <tr class="row-g">
+        <td class="pnum">III</td>
+        <td>Type Safety &amp; Error Handling <em>(non-negotiable)</em></td>
+        <td>No <code>panic()</code>, no <code>any</code>, <code>%w</code> error wrapping</td>
+        <td>0 runtime panics (13 in codegen only); ~0 real <code>any</code>; <strong>78%</strong> of <code>fmt.Errorf</code> use <code>%w</code>.</td>
+        <td><span class="badge b-g">ALIGNED</span></td>
+        <td class="nature">—</td>
+      </tr>
+      <tr class="row-a">
+        <td class="pnum">IV</td>
+        <td>Test-Driven Development</td>
+        <td>Contract + integration + unit + permission + E2E; CI-gated; coverage reports</td>
+        <td>90 Go + 46 Py + 35 UI tests; E2E real &amp; CI-wired. But <strong>control-plane has no CI test job</strong>, no Go coverage, no formal contract tests.</td>
+        <td><span class="badge b-a">PARTIAL</span></td>
+        <td class="nature">enforcement holes</td>
+      </tr>
+      <tr class="row-a">
+        <td class="pnum">V</td>
+        <td>Component Modularity</td>
+        <td>Handler/type/service split, no cycles, <strong>≤200-line files</strong></td>
+        <td>Layering + colocation <strong>consistently followed</strong>. But <strong>43 UI + 49 Go files &gt;200 lines</strong>; <code>kube_reconciler.go</code> = 3550.</td>
+        <td><span class="badge b-a">PARTIAL</span></td>
+        <td class="nature">200-line rule = fiction</td>
+      </tr>
+      <tr class="row-a">
+        <td class="pnum">VI</td>
+        <td>Observability &amp; Monitoring</td>
+        <td><code>/metrics</code> Prometheus <strong>REQUIRED</strong> (p50/p95/p99, error rates)</td>
+        <td>Health, structured logging, K8s events, status — present. <strong>MLflow tracing implemented</strong>. But <strong>zero Prometheus instrumentation</strong> anywhere.</td>
+        <td><span class="badge b-a">PARTIAL</span> → <span class="badge b-r">GAP</span></td>
+        <td class="nature"><span class="tag-doc">📜</span> + metrics gap</td>
+      </tr>
+      <tr class="row-g">
+        <td class="pnum">VII</td>
+        <td>Resource Lifecycle Management</td>
+        <td>OwnerReferences + cascading delete, idempotent creation</td>
+        <td>OwnerRefs set (session SA is the anchor); idempotent <code>ensureX</code>. Minor: one transient GRPCRoute orphan window.</td>
+        <td><span class="badge b-g">ALIGNED</span></td>
+        <td class="nature">—</td>
+      </tr>
+      <tr class="row-r">
+        <td class="pnum">VIII</td>
+        <td>Context Engineering &amp; Prompt Optimization</td>
+        <td>Template library, context budgets, compression, personas, incremental loading</td>
+        <td><strong>None implemented.</strong> Only a <code>max_tokens</code> response cap; personas spec = “Draft, not in scope.”</td>
+        <td><span class="badge b-r">GAP</span></td>
+        <td class="nature">not built</td>
+      </tr>
+      <tr class="row-a">
+        <td class="pnum">IX</td>
+        <td>Data Access &amp; Knowledge Augmentation</td>
+        <td>RAG + MCP (namespace isolation) + RLHF (ratings, A/B)</td>
+        <td><strong>MCP aligned</strong> (namespace isolation, token exchange). <strong>RLHF strong</strong> (Langfuse → weekly feedback loop; no A/B). <strong>RAG absent.</strong></td>
+        <td><span class="badge b-a">PARTIAL</span></td>
+        <td class="nature">RAG not built · <em>dropped in ACP draft</em></td>
+      </tr>
+      <tr class="row-r">
+        <td class="pnum">X</td>
+        <td>Commit Discipline &amp; Code Review</td>
+        <td>Atomic commits, line thresholds, conventional format, PR ≤600, size tooling</td>
+        <td>Conventions <strong>documented</strong> (CONTRIBUTING.md) + review gating (CODEOWNERS, Mergify, CodeRabbit). <strong>No size/format enforcement tooling.</strong></td>
+        <td><span class="badge b-r">GAP</span></td>
+        <td class="nature">unenforced · <em>line-length check removed by decision</em></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2 · Constitution diff <span style="font-weight:400;color:var(--muted);font-size:14px">— upstream v1.1.0 → ACP draft v2.0.0</span></h2>
+  <p class="sub">Only materially-changed principles shown. III · IV · VII carried over (reaffirmed).</p>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle I</span> Kubernetes-Native → K8s Execution, PostgreSQL-Authoritative State</div>
+<pre class="code"><span class="ln h">@@ Core Principles · I @@</span><span class="ln d"><span class="m">-</span>### I. Kubernetes-Native Architecture</span><span class="ln d"><span class="m">-</span>- Custom Resource Definitions (CRDs) for domain objects</span><span class="ln d"><span class="m">-</span>  (AgenticSession, ProjectSettings, RFEWorkflow)</span><span class="ln d"><span class="m">-</span>- Operators for reconciliation loops</span><span class="ln a"><span class="m">+</span>### I. Kubernetes-Native Execution, PostgreSQL-Authoritative State</span><span class="ln a"><span class="m">+</span>- PostgreSQL is the source of truth for all domain objects</span><span class="ln a"><span class="m">+</span>  (sessions, projects, project settings) — never a CRD, never etcd.</span><span class="ln a"><span class="m">+</span>- Control plane reconciles via gRPC watch streams</span><span class="ln a"><span class="m">+</span>  (WatchSessions/Projects/ProjectSettings) — a reconciler, not a CRD operator.</span><span class="ln a"><span class="m">+</span>- Legacy CRDs (AgenticSession, RFEWorkflow) are NOT a source of truth;</span><span class="ln a"><span class="m">+</span>  vteam.ambient-code RBAC refs retained for compat only.</span><span class="ln ctx"><span class="m"> </span>- Jobs, PVCs, Secrets, Services, RBAC remain the execution/isolation substrate.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle II</span> Security &amp; Multi-Tenancy First</div>
+<pre class="code"><span class="ln h">@@ Core Principles · II @@</span><span class="ln d"><span class="m">-</span>User token auth (GetK8sClientsForRequest), RBAC, token redaction,</span><span class="ln d"><span class="m">-</span>project-scoped isolation ... are all non-negotiable.</span><span class="ln a"><span class="m">+</span>Identity via OIDC/SSO; authorization via project-scoped RBAC in PostgreSQL.</span><span class="ln a"><span class="m">+</span>Least-privilege cluster access via a scoped backend ServiceAccount;</span><span class="ln a"><span class="m">+</span>every session gets an isolated namespace + dedicated SA/Role/RoleBinding.</span><span class="ln a"><span class="m">+</span>Redaction mandatory in ALL components (gap: runner-only today → extend to Go).</span><span class="ln a"><span class="m">+</span>OpenShell privileged mode is a GOVERNED EXCEPTION: feature-gated,</span><span class="ln a"><span class="m">+</span>scoped to the sandbox path, MUST NOT be the default.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle V</span> Component Modularity</div>
+<pre class="code"><span class="ln h">@@ Core Principles · V @@</span><span class="ln d"><span class="m">-</span>- File Size Limit: Components over 200 lines MUST be broken down</span><span class="ln a"><span class="m">+</span>- Size as a review trigger, not a hard gate: files over 300 lines</span><span class="ln a"><span class="m">+</span>  SHOULD be justified or decomposed. Known large files (reconciler,</span><span class="ln a"><span class="m">+</span>  largest handlers) are tracked debt and MUST NOT grow without cause.</span><span class="ln ctx"><span class="m"> </span>- Handler/type/service separation preserved (all 20 plugins follow it).</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle VI</span> Observability &amp; Monitoring</div>
+<pre class="code"><span class="ln h">@@ Core Principles · VI @@</span><span class="ln ctx"><span class="m"> </span>- Structured logging, /healthz, K8s events, status subresource (present).</span><span class="ln a"><span class="m">+</span>- MLflow tracing is the sanctioned AI-execution observability layer.</span><span class="ln d"><span class="m">-</span>- Metrics: /metrics Prometheus REQUIRED on a management port.</span><span class="ln a"><span class="m">+</span>- Prometheus /metrics REQUIRED for long-running services (api-server,</span><span class="ln a"><span class="m">+</span>  control-plane, gateway). CURRENT GAP: zero instrumentation → MUST-adopt.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle VIII</span> Context Engineering — maturity downgraded</div>
+<pre class="code"><span class="ln h">@@ Core Principles · VIII @@</span><span class="ln d"><span class="m">-</span>### VIII. Context Engineering &amp; Prompt Optimization</span><span class="ln a"><span class="m">+</span>### VIII. Context Engineering &amp; Prompt Optimization — ASPIRATIONAL</span><span class="ln a"><span class="m">+</span>The following are endorsed targets, NOT yet implemented:</span><span class="ln ctx"><span class="m"> </span>- context budgets, prompt templates, session compression, personas.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle IX</span> Data Access &amp; Knowledge Augmentation — <span style="color:var(--del-fg)">REMOVED</span></div>
+<pre class="code"><span class="ln h">@@ Core Principles · IX — dropped entirely @@</span><span class="ln d"><span class="m">-</span>### IX. Data Access &amp; Knowledge Augmentation</span><span class="ln d"><span class="m">-</span>- RAG: embed / index / chunk / rerank</span><span class="ln d"><span class="m">-</span>- MCP: structured data access with namespace isolation</span><span class="ln d"><span class="m">-</span>- RLHF: user ratings, feedback loop, A/B testing</span><span class="ln ctx"><span class="m"> </span>MCP + RLHF stay in the codebase as implementation — not as a constitutional principle.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">Principle X → IX</span> Commit Discipline &amp; Code Review — renumbered</div>
+<pre class="code"><span class="ln h">@@ Core Principles · X → IX @@</span><span class="ln d"><span class="m">-</span>### X. Commit Discipline &amp; Code Review</span><span class="ln a"><span class="m">+</span>### IX. Commit Discipline &amp; Code Review</span><span class="ln d"><span class="m">-</span>- Line-count guidance: bugfix ≤150, feature ≤300/500, refactor ≤400</span><span class="ln d"><span class="m">-</span>- PRs over 600 lines MUST be split  (line-length / PR-size check)</span><span class="ln a"><span class="m">+</span>- Conventional format + atomic commits, kept as review-driven convention.</span><span class="ln a"><span class="m">+</span>- NO line-length / PR-size check — reviewers + CODEOWNERS own scope.</span></pre>
+  </div>
+
+  <div class="diff">
+    <div class="fname"><span class="pill">NEW</span> Enforcement &amp; Constitutional Alignment (added section)</div>
+<pre class="code"><span class="ln h">@@ + new section @@</span><span class="ln a"><span class="m">+</span>Every principle mapped to a real enforcement surface in this repo:</span><span class="ln a"><span class="m">+</span>  III/VII → pre-commit (golangci-lint) + operator-review agent   [ACTIVE]</span><span class="ln a"><span class="m">+</span>  II      → security-review agent + .coderabbit.yaml + pr-review-gate [ACTIVE]</span><span class="ln a"><span class="m">+</span>  IV      → unit-tests.yml + e2e workflow                          [PARTIAL]</span><span class="ln a"><span class="m">+</span>  I/V/IX  → review-driven (operator-review, CODEOWNERS); no size gate [ACTIVE]</span><span class="ln a"><span class="m">+</span>  VI      → /metrics CI check                                      [PROPOSED]</span><span class="ln d"><span class="m">-</span>  SDD manifest + preflight RETIRED · authority = AGENTS.md</span></pre>
+  </div>
+
+  <h2>3 · What to fix next (ordered)</h2>
+  <table>
+    <thead><tr><th>Priority</th><th>Action</th><th>Closes</th></tr></thead>
+    <tbody>
+      <tr class="row-r"><td><span class="badge b-r">P0</span></td><td>Extend token/secret redaction from the runner into the Go services</td><td>II</td></tr>
+      <tr class="row-r"><td><span class="badge b-r">P0</span></td><td>Fix stale CLAUDE.md: <code>GetK8sClientsForRequest</code> no longer exists</td><td>II</td></tr>
+      <tr class="row-a"><td><span class="badge b-a">P1</span></td><td>Add control-plane test job + Go coverage reports to <code>unit-tests.yml</code></td><td>IV</td></tr>
+      <tr class="row-a"><td><span class="badge b-a">P1</span></td><td>Add Prometheus <code>/metrics</code> to api-server, control-plane, gateway</td><td>VI</td></tr>
+      <tr class="row-a"><td><span class="badge b-a">P2</span></td><td>Retire <code>sdd-manifest.yaml</code> + <code>sdd-preflight.yml</code>; scrub refs in <code>BOOKMARKS.md</code> / <code>runner-constitution.md</code></td><td>gov</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Draft constitution written to <code>specs/memory/constitution.md</code> (v2.0.0-draft) — fixes the broken
+    <code>**Parent**</code> link in <code>runner-constitution.md</code>.
+    <strong>Direction:</strong> authority = <code>AGENTS.md</code> (CLAUDE.md symlink) · SDD manifest/preflight retired ·
+    Principle IX (Data Access) dropped · no line-length/PR-size check.
+    Branch <code>constitution</code>. Section&nbsp;1 is the audit vs the <em>upstream</em> constitution; Section&nbsp;2 is the ACP redraft.
+    Evidence from a read-only 4-agent codebase audit, not from memory.
+  </div>
+
+</div>
+</body>
+</html>
