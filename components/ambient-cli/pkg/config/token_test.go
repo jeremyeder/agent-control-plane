@@ -124,7 +124,7 @@ func TestRefreshAccessToken_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	access, refresh, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh-token")
+	access, refresh, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh-token", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestRefreshAccessToken_ErrorResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := RefreshAccessToken(srv.URL, "test-client", "bad-refresh")
+	_, _, err := RefreshAccessToken(srv.URL, "test-client", "bad-refresh", false)
 	if err == nil {
 		t.Fatal("expected error for expired refresh token")
 	}
@@ -157,9 +157,36 @@ func TestRefreshAccessToken_NoAccessToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh")
+	_, _, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh", false)
 	if err == nil {
 		t.Fatal("expected error for missing access_token")
+	}
+}
+
+func TestRefreshAccessToken_InsecureTLS(t *testing.T) {
+	newAccessToken := makeJWT(jwt.MapClaims{"exp": float64(time.Now().Add(1 * time.Hour).Unix())})
+	// TLS server with a self-signed cert the client does not trust by default.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"new-refresh"}`, newAccessToken)
+	}))
+	defer srv.Close()
+
+	// Verification enabled: the untrusted cert must cause failure.
+	if _, _, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh", false); err == nil {
+		t.Fatal("expected TLS verification failure against self-signed cert")
+	}
+
+	// Verification disabled (opt-in): refresh must succeed.
+	access, refresh, err := RefreshAccessToken(srv.URL, "test-client", "my-refresh", true)
+	if err != nil {
+		t.Fatalf("unexpected error with insecure TLS: %v", err)
+	}
+	if access != newAccessToken {
+		t.Error("access token mismatch")
+	}
+	if refresh != "new-refresh" {
+		t.Errorf("expected new-refresh, got %q", refresh)
 	}
 }
 

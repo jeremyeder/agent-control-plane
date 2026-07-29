@@ -130,7 +130,7 @@ func (c *Config) GetTokenWithRefresh() (string, error) {
 		return c.AccessToken, nil
 	}
 
-	newAccess, newRefresh, refreshErr := RefreshAccessToken(c.IssuerURL, c.ClientID, c.RefreshToken)
+	newAccess, newRefresh, refreshErr := RefreshAccessToken(c.IssuerURL, c.ClientID, c.RefreshToken, c.InsecureTLSVerify)
 	if refreshErr != nil {
 		return c.AccessToken, nil
 	}

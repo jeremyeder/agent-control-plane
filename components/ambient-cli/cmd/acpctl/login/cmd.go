@@ -3,6 +3,7 @@ package login
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"time"
 
@@ -165,12 +166,31 @@ func run(cmd *cobra.Command, positional []string) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: TLS certificate verification is disabled (--insecure-skip-tls-verify)")
 	}
 
-	if exp, err := config.TokenExpiry(accessToken); err == nil && !exp.IsZero() {
-		if time.Until(exp) < 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: token is already expired (at %s)\n", exp.Format(time.RFC3339))
-		} else if time.Until(exp) < 24*time.Hour {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: token expires soon (at %s)\n", exp.Format(time.RFC3339))
-		}
-	}
+	writeTokenExpiryNotice(cmd.OutOrStdout(), cmd.ErrOrStderr(), cfg.RefreshToken != "", accessToken, time.Now())
 	return nil
+}
+
+// writeTokenExpiryNotice reports on access-token lifetime after login.
+//
+// When a refresh token is stored, the short access-token lifespan is expected
+// and handled transparently (the CLI refreshes on demand), so we print a
+// reassuring informational line rather than a warning. Only when there is no
+// refresh token does a short lifespan genuinely mean the user must re-login,
+// in which case we warn.
+func writeTokenExpiryNotice(out, errOut io.Writer, hasRefreshToken bool, accessToken string, now time.Time) {
+	if hasRefreshToken {
+		fmt.Fprintln(out, "Access tokens are refreshed automatically using the stored refresh token.")
+		return
+	}
+
+	exp, err := config.TokenExpiry(accessToken)
+	if err != nil || exp.IsZero() {
+		return
+	}
+
+	if now.After(exp) {
+		fmt.Fprintf(errOut, "Warning: token is already expired (at %s)\n", exp.Format(time.RFC3339))
+	} else if exp.Sub(now) < 24*time.Hour {
+		fmt.Fprintf(errOut, "Warning: token expires soon (at %s)\n", exp.Format(time.RFC3339))
+	}
 }

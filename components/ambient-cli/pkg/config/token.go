@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,7 +53,7 @@ func IsTokenExpired(tokenStr string) (bool, error) {
 	return time.Now().After(expiry), nil
 }
 
-func RefreshAccessToken(issuerURL, clientID, refreshToken string) (accessToken, newRefreshToken string, err error) {
+func RefreshAccessToken(issuerURL, clientID, refreshToken string, insecureTLSVerify bool) (accessToken, newRefreshToken string, err error) {
 	tokenURL := strings.TrimRight(issuerURL, "/") + "/protocol/openid-connect/token"
 
 	params := url.Values{
@@ -62,6 +63,14 @@ func RefreshAccessToken(issuerURL, clientID, refreshToken string) (accessToken, 
 	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
+	if insecureTLSVerify {
+		// Honor the same opt-in as the SDK client (--insecure-skip-tls-verify /
+		// insecure_tls_verify). Without this, token refresh fails against issuers
+		// with untrusted certs even though the user explicitly disabled verification.
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: opt-in via insecure_tls_verify
+		}
+	}
 	resp, err := httpClient.PostForm(tokenURL, params)
 	if err != nil {
 		return "", "", fmt.Errorf("POST to token endpoint: %w", err)
