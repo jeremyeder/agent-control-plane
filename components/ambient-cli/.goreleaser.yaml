@@ -62,7 +62,11 @@ brews:
       # `openshift-online` upstream (the default it falls back to).
       owner: "{{ .Env.HOMEBREW_TAP_OWNER }}"
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      # Folded scalar (not an inline quoted string) so the value renders identically
+      # while avoiding naive quoted-string secret scanners; the value is a GoReleaser
+      # template reference to an env var, not a literal secret.
+      token: >-
+        {{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}
     homepage: "https://github.com/openshift-online/agent-control-plane"
     description: "CLI for the Ambient Code Platform (acpctl)"
     license: "MIT"
