@@ -37,24 +37,30 @@ acpctl version   # Client: 0.1.0 (...)
 
 ## Required repo configuration
 
-The release job needs the following on the repo it runs in:
+The workflow mints a short-lived token to push the formula, using a **GitHub App**
+(`actions/create-github-app-token`) rather than a long-lived PAT, per the repo's
+CI/CD security conventions. Set the following on the repo it runs in:
 
 | Kind | Name | Value | Purpose |
 | --- | --- | --- | --- |
-| Secret | `HOMEBREW_TAP_GITHUB_TOKEN` | token with write access to `<owner>/homebrew-tap` | lets GoReleaser push the formula |
-| Variable | `HOMEBREW_TAP_OWNER` | tap owner (e.g. `jeremyeder`) | selects which tap to publish to; unset → defaults to `openshift-online` |
+| Secret | `HOMEBREW_TAP_APP_ID` | App ID of a GitHub App with Contents:write on `<owner>/homebrew-tap` | mints the tap-push token |
+| Secret | `HOMEBREW_TAP_APP_PRIVATE_KEY` | that App's private key (PEM) | mints the tap-push token |
+| Variable | `HOMEBREW_TAP_OWNER` | tap owner (optional) | selects which tap to publish to; unset → defaults to `openshift-online` |
 
 `GITHUB_TOKEN` is provided automatically and is used only to create the Release
 (the workflow grants it `contents: write`).
 
-### Token guidance
+### Setup
 
-- **Upstream (`openshift-online`):** use a **GitHub App token** via
-  `actions/create-github-app-token` rather than a long-lived PAT, per the repo's
-  CI/CD security conventions. Leave `HOMEBREW_TAP_OWNER` unset so it defaults to
-  `openshift-online`.
-- **Fork validation (`jeremyeder`):** a fine-scoped PAT with write access to
-  `jeremyeder/homebrew-tap` is acceptable. Set `HOMEBREW_TAP_OWNER=jeremyeder`.
+1. Create a GitHub App (org- or user-owned) with **Repository permissions →
+   Contents: Read and write**, and install it on `<owner>/homebrew-tap`.
+2. Store its App ID and a generated private key as the two secrets above.
+3. Upstream: leave `HOMEBREW_TAP_OWNER` unset (defaults to `openshift-online`).
+
+> The `v0.1.0` fork validation used a fine-scoped **PAT** in a
+> `HOMEBREW_TAP_GITHUB_TOKEN` secret with `HOMEBREW_TAP_OWNER=jeremyeder`. That is
+> fine for one-off validation, but the workflow now standardizes on the App-token
+> flow above; the App-token path has not yet been exercised end-to-end.
 
 ## Local dry run (no publishing)
 

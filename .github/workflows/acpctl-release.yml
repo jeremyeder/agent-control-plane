@@ -27,6 +27,18 @@ jobs:
           # (repo root has none).
           cache-dependency-path: components/ambient-cli/go.sum
 
+      # Mint a short-lived token to push the formula to the tap via a GitHub App,
+      # per repo CI/CD conventions (no long-lived PATs). Requires an App with
+      # Contents:write on <owner>/homebrew-tap; see components/ambient-cli/RELEASING.md.
+      - name: Generate tap token
+        id: tap_token
+        uses: actions/create-github-app-token@v2 # first-party (actions/*), tag OK
+        with:
+          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: ${{ vars.HOMEBREW_TAP_OWNER || 'openshift-online' }}
+          repositories: homebrew-tap
+
       # Install the OSS GoReleaser binary directly (pinned) rather than the
       # third-party goreleaser/goreleaser-action, to minimize supply-chain surface.
       # Keep this version in sync with the one used for local dry-runs (RELEASING.md).
@@ -39,10 +51,7 @@ jobs:
         run: goreleaser release --clean --config components/ambient-cli/.goreleaser.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Fork validation sets the repo variable HOMEBREW_TAP_OWNER=jeremyeder;
-          # upstream leaves it unset and it falls back to openshift-online.
+          # Owner of the tap repo. Unset upstream → defaults to openshift-online.
           HOMEBREW_TAP_OWNER: ${{ vars.HOMEBREW_TAP_OWNER || 'openshift-online' }}
-          # Token with write access to the <owner>/homebrew-tap repo. Fork uses a
-          # fine-scoped PAT; upstream should use a GitHub App token
-          # (actions/create-github-app-token) per CLAUDE.md.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Short-lived App token (from the step above) with write access to the tap.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
